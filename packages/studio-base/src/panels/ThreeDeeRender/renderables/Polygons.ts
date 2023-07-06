@@ -6,8 +6,9 @@ import { toNanoSec } from "@foxglove/rostime";
 import { SettingsTreeAction, SettingsTreeFields } from "@foxglove/studio";
 import type { RosValue } from "@foxglove/studio-base/players/types";
 
+import { RenderableLineStrip } from "./markers/RenderableLineStrip";
+import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
 import { BaseUserData, Renderable } from "../Renderable";
-import { Renderer } from "../Renderer";
 import { PartialMessage, PartialMessageEvent, SceneExtension } from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import { makeRgba, rgbaToCssString, stringToRgba } from "../color";
@@ -22,8 +23,8 @@ import {
   TIME_ZERO,
 } from "../ros";
 import { BaseSettings } from "../settings";
+import { topicIsConvertibleToSchema } from "../topicIsConvertibleToSchema";
 import { makePose } from "../transforms";
-import { RenderableLineStrip } from "./markers/RenderableLineStrip";
 
 export type LayerSettingsPolygon = BaseSettings & {
   lineWidth: number;
@@ -60,10 +61,18 @@ export class PolygonRenderable extends Renderable<PolygonUserData> {
 }
 
 export class Polygons extends SceneExtension<PolygonRenderable> {
-  public constructor(renderer: Renderer) {
+  public constructor(renderer: IRenderer) {
     super("foxglove.Polygons", renderer);
+  }
 
-    renderer.addDatatypeSubscriptions(POLYGON_STAMPED_DATATYPES, this.handlePolygon);
+  public override getSubscriptions(): readonly AnyRendererSubscription[] {
+    return [
+      {
+        type: "schema",
+        schemaNames: POLYGON_STAMPED_DATATYPES,
+        subscription: { handler: this.#handlePolygon },
+      },
+    ];
   }
 
   public override settingsNodes(): SettingsTreeEntry[] {
@@ -71,26 +80,27 @@ export class Polygons extends SceneExtension<PolygonRenderable> {
     const handler = this.handleSettingsAction;
     const entries: SettingsTreeEntry[] = [];
     for (const topic of this.renderer.topics ?? []) {
-      if (POLYGON_STAMPED_DATATYPES.has(topic.datatype)) {
-        const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPolygon>;
-
-        // prettier-ignore
-        const fields: SettingsTreeFields = {
-          lineWidth: { label: "Line Width", input: "number", min: 0, placeholder: String(DEFAULT_LINE_WIDTH), step: 0.005, precision: 3, value: config.lineWidth },
-          color: { label: "Color", input: "rgba", value: config.color ?? DEFAULT_COLOR_STR },
-        };
-
-        entries.push({
-          path: ["topics", topic.name],
-          node: {
-            label: topic.name,
-            icon: "Star",
-            fields,
-            visible: config.visible ?? DEFAULT_SETTINGS.visible,
-            handler,
-          },
-        });
+      if (!topicIsConvertibleToSchema(topic, POLYGON_STAMPED_DATATYPES)) {
+        continue;
       }
+      const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPolygon>;
+
+      // prettier-ignore
+      const fields: SettingsTreeFields = {
+        lineWidth: { label: "Line Width", input: "number", min: 0, placeholder: String(DEFAULT_LINE_WIDTH), step: 0.005, precision: 3, value: config.lineWidth },
+        color: { label: "Color", input: "rgba", value: config.color ?? DEFAULT_COLOR_STR },
+      };
+
+      entries.push({
+        path: ["topics", topic.name],
+        node: {
+          label: topic.name,
+          icon: "Star",
+          fields,
+          visible: config.visible ?? DEFAULT_SETTINGS.visible,
+          handler,
+        },
+      });
     }
     return entries;
   }
@@ -111,7 +121,7 @@ export class Polygons extends SceneExtension<PolygonRenderable> {
         | Partial<LayerSettingsPolygon>
         | undefined;
       renderable.userData.settings = { ...DEFAULT_SETTINGS, ...settings };
-      this._updatePolygonRenderable(
+      this.#updatePolygonRenderable(
         renderable,
         renderable.userData.polygonStamped,
         renderable.userData.receiveTime,
@@ -119,7 +129,7 @@ export class Polygons extends SceneExtension<PolygonRenderable> {
     }
   };
 
-  private handlePolygon = (messageEvent: PartialMessageEvent<PolygonStamped>): void => {
+  #handlePolygon = (messageEvent: PartialMessageEvent<PolygonStamped>): void => {
     const topic = messageEvent.topic;
     const polygonStamped = normalizePolygonStamped(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
@@ -148,10 +158,10 @@ export class Polygons extends SceneExtension<PolygonRenderable> {
       this.renderables.set(topic, renderable);
     }
 
-    this._updatePolygonRenderable(renderable, polygonStamped, receiveTime);
+    this.#updatePolygonRenderable(renderable, polygonStamped, receiveTime);
   };
 
-  private _updatePolygonRenderable(
+  #updatePolygonRenderable(
     renderable: PolygonRenderable,
     polygonStamped: PolygonStamped,
     receiveTime: bigint,

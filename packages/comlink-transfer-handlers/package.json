@@ -20,6 +20,7 @@
     "prepack": "tsc -b"
   },
   "devDependencies": {
-    "typescript": "4.8.2"
+    "comlink": "4.4.1",
+    "typescript": "5.1.6"
   }
 }

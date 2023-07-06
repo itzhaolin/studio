@@ -11,67 +11,64 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { setWarningCallback } from "@fluentui/react";
 import { useTheme } from "@mui/material";
+import { TFunction } from "i18next";
 import { flatten } from "lodash";
-import { ComponentProps, ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { ComponentProps, ReactNode, useLayoutEffect, useMemo, useState } from "react";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend } from "react-dnd-html5-backend";
+import { useTranslation } from "react-i18next";
 import { Mosaic, MosaicNode, MosaicWindow } from "react-mosaic-component";
 
 import { useShallowMemo } from "@foxglove/hooks";
-import Logger from "@foxglove/log";
-import { MessageEvent } from "@foxglove/studio";
+import {
+  MessageEvent,
+  ParameterValue,
+  RegisterMessageConverterArgs,
+  SettingsTree,
+} from "@foxglove/studio";
 import MockMessagePipelineProvider from "@foxglove/studio-base/components/MessagePipeline/MockMessagePipelineProvider";
 import SettingsTreeEditor from "@foxglove/studio-base/components/SettingsTreeEditor";
 import AppConfigurationContext from "@foxglove/studio-base/context/AppConfigurationContext";
-import {
-  CurrentLayoutActions,
-  SelectedPanelActions,
-  useCurrentLayoutActions,
-  useSelectedPanels,
-} from "@foxglove/studio-base/context/CurrentLayoutContext";
+import { useCurrentLayoutActions } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { PanelsActions } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
 import PanelCatalogContext, {
   PanelCatalog,
-  PanelInfo,
 } from "@foxglove/studio-base/context/PanelCatalogContext";
-import { usePanelSettingsEditorStore } from "@foxglove/studio-base/context/PanelSettingsEditorContext";
+import {
+  PanelStateStore,
+  usePanelStateStore,
+} from "@foxglove/studio-base/context/PanelStateContext";
 import {
   UserNodeStateProvider,
   useUserNodeState,
 } from "@foxglove/studio-base/context/UserNodeStateContext";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import { LinkedGlobalVariables } from "@foxglove/studio-base/panels/ThreeDimensionalViz/Interactions/useLinkedGlobalVariables";
+import * as panels from "@foxglove/studio-base/panels";
 import { Diagnostic, UserNodeLog } from "@foxglove/studio-base/players/UserNodePlayer/types";
 import {
-  Topic,
+  AdvertiseOptions,
   PlayerStateActiveData,
   Progress,
   PublishPayload,
-  AdvertiseOptions,
+  Topic,
 } from "@foxglove/studio-base/players/types";
 import MockCurrentLayoutProvider from "@foxglove/studio-base/providers/CurrentLayoutProvider/MockCurrentLayoutProvider";
 import ExtensionCatalogProvider from "@foxglove/studio-base/providers/ExtensionCatalogProvider";
-import HelpInfoProvider from "@foxglove/studio-base/providers/HelpInfoProvider";
-import { PanelSettingsEditorContextProvider } from "@foxglove/studio-base/providers/PanelSettingsEditorContextProvider";
+import { PanelStateContextProvider } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import TimelineInteractionStateProvider from "@foxglove/studio-base/providers/TimelineInteractionStateProvider";
+import WorkspaceContextProvider from "@foxglove/studio-base/providers/WorkspaceContextProvider";
 import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { SavedProps, UserNodes } from "@foxglove/studio-base/types/panels";
 
-const log = Logger.getLogger(__filename);
+import "react-mosaic-component/react-mosaic-component.css";
+
+function noop() {}
 
 type Frame = {
-  [topic: string]: MessageEvent<unknown>[];
+  [topic: string]: MessageEvent[];
 };
-
-setWarningCallback((msg) => {
-  if (msg.endsWith("was not registered.")) {
-    return;
-  }
-  log.warn(`[FluentUI] ${msg}`);
-});
 
 export type Fixture = {
   frame?: Frame;
@@ -83,7 +80,6 @@ export type Fixture = {
   datatypes?: RosDatatypes;
   globalVariables?: GlobalVariables;
   layout?: MosaicNode<string>;
-  linkedGlobalVariables?: LinkedGlobalVariables;
   userNodes?: UserNodes;
   userNodeDiagnostics?: { [nodeId: string]: readonly Diagnostic[] };
   userNodeFlags?: { id: string };
@@ -93,22 +89,22 @@ export type Fixture = {
   publish?: (request: PublishPayload) => void;
   setPublishers?: (publisherId: string, advertisements: AdvertiseOptions[]) => void;
   setSubscriptions?: ComponentProps<typeof MockMessagePipelineProvider>["setSubscriptions"];
+  setParameter?: (key: string, value: ParameterValue) => void;
+  messageConverters?: readonly RegisterMessageConverterArgs<unknown>[];
+  panelState?: Partial<PanelStateStore>;
 };
 
 type UnconnectedProps = {
   children: React.ReactNode;
   fixture?: Fixture;
   includeSettings?: boolean;
+  settingsWidth?: number;
   panelCatalog?: PanelCatalog;
   omitDragAndDrop?: boolean;
   pauseFrame?: ComponentProps<typeof MockMessagePipelineProvider>["pauseFrame"];
-  onMount?: (
-    arg0: HTMLDivElement,
-    actions: CurrentLayoutActions,
-    selectedPanelActions: SelectedPanelActions,
-  ) => void;
-  onFirstMount?: (arg0: HTMLDivElement) => void;
   style?: React.CSSProperties;
+  // Needed for functionality not in React.CSSProperties, like child selectors: "& > *"
+  className?: string;
 };
 
 function setNativeValue(element: unknown, value: unknown) {
@@ -120,6 +116,21 @@ function setNativeValue(element: unknown, value: unknown) {
   } else {
     valueSetter?.call(element, value);
   }
+}
+
+export function makeMockPanelCatalog(t: TFunction<"panels">): PanelCatalog {
+  const allPanels = [...panels.getBuiltin(t), ...panels.getDebug(t)];
+
+  const visiblePanels = [...panels.getBuiltin(t)];
+
+  return {
+    getPanels() {
+      return visiblePanels;
+    },
+    getPanelByType(type: string) {
+      return allPanels.find((panel) => panel.type === type);
+    },
+  };
 }
 
 export function triggerInputChange(
@@ -163,35 +174,48 @@ export const MosaicWrapper = ({ children }: { children: React.ReactNode }): JSX.
   );
 };
 
-// empty catalog if one is not provided via props
-class MockPanelCatalog implements PanelCatalog {
-  public getPanels(): readonly PanelInfo[] {
-    return [];
-  }
-  public getPanelByType(_type: string): PanelInfo | undefined {
-    return undefined;
-  }
-}
+const EmptyTree: SettingsTree = {
+  actionHandler: () => undefined,
+  nodes: {},
+};
 
 function PanelWrapper({
   children,
-  includeSettings,
+  includeSettings = false,
+  settingsWidth,
 }: {
   children?: ReactNode;
   includeSettings?: boolean;
+  settingsWidth?: number;
 }): JSX.Element {
-  const settings = usePanelSettingsEditorStore((store) => Object.values(store.settingsTrees)[0]);
+  const settings = usePanelStateStore((store) => {
+    const trees = Object.values(store.settingsTrees);
+    if (trees.length > 1) {
+      throw new Error(
+        `includeSettings requires there to be at most 1 panel, found ${trees.length}`,
+      );
+    }
+    return trees[0] ?? EmptyTree;
+  });
 
   return (
     <>
-      {settings && includeSettings && <SettingsTreeEditor settings={settings} />}
+      {includeSettings && (
+        <div style={{ overflow: "auto", width: settingsWidth }}>
+          <SettingsTreeEditor settings={settings} />
+        </div>
+      )}
       {children}
     </>
   );
 }
 
 function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull {
-  const [mockPanelCatalog] = useState(() => props.panelCatalog ?? new MockPanelCatalog());
+  const { t } = useTranslation("panels");
+  const mockPanelCatalog = useMemo(
+    () => props.panelCatalog ?? makeMockPanelCatalog(t),
+    [props.panelCatalog, t],
+  );
   const [mockAppConfiguration] = useState(() => ({
     get() {
       return undefined;
@@ -201,10 +225,7 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
     removeChangeListener() {},
   }));
 
-  const hasMounted = useRef(false);
-
   const actions = useCurrentLayoutActions();
-  const selectedPanels = useSelectedPanels();
   const { setUserNodeDiagnostics, addUserNodeLogs, setUserNodeRosLib } = useUserNodeState();
   const userNodeActions = useShallowMemo({
     setUserNodeDiagnostics,
@@ -221,7 +242,6 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
       globalVariables,
       userNodes,
       layout,
-      linkedGlobalVariables,
       userNodeDiagnostics,
       userNodeLogs,
       userNodeRosLib,
@@ -235,9 +255,6 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
     }
     if (layout != undefined) {
       actions.changePanelLayout({ layout });
-    }
-    if (linkedGlobalVariables) {
-      actions.setLinkedGlobalVariables(linkedGlobalVariables);
     }
     if (userNodeDiagnostics) {
       for (const [nodeId, diagnostics] of Object.entries(userNodeDiagnostics)) {
@@ -271,12 +288,15 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
     publish,
     setPublishers,
     setSubscriptions,
+    setParameter,
   } = props.fixture ?? {};
   let dTypes = datatypes;
   if (!dTypes) {
     const dummyDatatypes: RosDatatypes = new Map();
-    for (const { datatype } of topics) {
-      dummyDatatypes.set(datatype, { definitions: [] });
+    for (const { schemaName } of topics) {
+      if (schemaName != undefined) {
+        dummyDatatypes.set(schemaName, { definitions: [] });
+      }
     }
     dTypes = dummyDatatypes;
   }
@@ -285,16 +305,7 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
   const inner = (
     <div
       style={{ width: "100%", height: "100%", display: "flex", ...props.style }}
-      ref={(el) => {
-        const { onFirstMount, onMount } = props;
-        if (el && onFirstMount && !hasMounted.current) {
-          hasMounted.current = true;
-          onFirstMount(el);
-        }
-        if (el && onMount) {
-          onMount(el, actions, selectedPanels);
-        }
-      }}
+      className={props.className}
     >
       <MockMessagePipelineProvider
         capabilities={capabilities}
@@ -306,12 +317,21 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
         activeData={activeData}
         progress={progress}
         publish={publish}
+        startPlayback={noop}
+        pausePlayback={noop}
+        seekPlayback={noop}
         setPublishers={setPublishers}
         setSubscriptions={setSubscriptions}
+        setParameter={setParameter}
       >
         <PanelCatalogContext.Provider value={mockPanelCatalog}>
           <AppConfigurationContext.Provider value={mockAppConfiguration}>
-            <PanelWrapper includeSettings={props.includeSettings}>{props.children}</PanelWrapper>
+            <PanelWrapper
+              includeSettings={props.includeSettings}
+              settingsWidth={props.settingsWidth}
+            >
+              {props.children}
+            </PanelWrapper>
           </AppConfigurationContext.Provider>
         </PanelCatalogContext.Provider>
       </MockMessagePipelineProvider>
@@ -329,26 +349,30 @@ function UnconnectedPanelSetup(props: UnconnectedProps): JSX.Element | ReactNull
 
 type Props = UnconnectedProps & {
   includeSettings?: boolean;
+  settingsWidth?: number;
   onLayoutAction?: (action: PanelsActions) => void;
 };
 
 export default function PanelSetup(props: Props): JSX.Element {
   const theme = useTheme();
   return (
-    <UserNodeStateProvider>
-      <TimelineInteractionStateProvider>
-        <MockCurrentLayoutProvider onAction={props.onLayoutAction}>
-          <PanelSettingsEditorContextProvider>
-            <ExtensionCatalogProvider loaders={[]}>
-              <HelpInfoProvider>
+    <WorkspaceContextProvider>
+      <UserNodeStateProvider>
+        <TimelineInteractionStateProvider>
+          <MockCurrentLayoutProvider onAction={props.onLayoutAction}>
+            <PanelStateContextProvider initialState={props.fixture?.panelState}>
+              <ExtensionCatalogProvider
+                loaders={[]}
+                mockMessageConverters={props.fixture?.messageConverters}
+              >
                 <ThemeProvider isDark={theme.palette.mode === "dark"}>
                   <UnconnectedPanelSetup {...props} />
                 </ThemeProvider>
-              </HelpInfoProvider>
-            </ExtensionCatalogProvider>
-          </PanelSettingsEditorContextProvider>
-        </MockCurrentLayoutProvider>
-      </TimelineInteractionStateProvider>
-    </UserNodeStateProvider>
+              </ExtensionCatalogProvider>
+            </PanelStateContextProvider>
+          </MockCurrentLayoutProvider>
+        </TimelineInteractionStateProvider>
+      </UserNodeStateProvider>
+    </WorkspaceContextProvider>
   );
 }

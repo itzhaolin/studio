@@ -5,9 +5,9 @@
 import { ByteBuffer } from "flatbuffers";
 import { BaseType, Schema, SchemaT, FieldT, Parser, Table } from "flatbuffers_reflection";
 
-import { RosMsgField } from "@foxglove/rosmsg";
+import { MessageDefinitionField } from "@foxglove/message-definition";
 
-import { RosDatatypes } from "./types";
+import { MessageDefinitionMap } from "./types";
 
 function typeForSimpleField(type: BaseType): string {
   switch (type) {
@@ -55,8 +55,8 @@ function flatbufferString(unchecked: string | Uint8Array | null | undefined): st
   throw new Error(`Expected string, found ${typeof unchecked}`);
 }
 
-function typeForField(schema: SchemaT, field: FieldT): RosMsgField[] {
-  const fields: RosMsgField[] = [];
+function typeForField(schema: SchemaT, field: FieldT): MessageDefinitionField[] {
+  const fields: MessageDefinitionField[] = [];
   switch (field.type?.baseType) {
     case BaseType.UType:
     case BaseType.Bool:
@@ -150,17 +150,20 @@ function typeForField(schema: SchemaT, field: FieldT): RosMsgField[] {
   return fields;
 }
 
-// Note: Currently this does not support "lazy" message reading in the style of the ros1 message
-// reader, and so will relatively inefficiently deserialize the entire flatbuffer message.
+/**
+ * Parse a flatbuffer binary schema and produce datatypes and a deserializer function.
+ *
+ * Note: Currently this does not support "lazy" message reading in the style of the ros1 message
+ * reader, and so will relatively inefficiently deserialize the entire flatbuffer message.
+ */
 export function parseFlatbufferSchema(
-  fullSchemaName: string,
+  schemaName: string,
   schemaArray: Uint8Array,
 ): {
-  fullSchemaName: string;
-  datatypes: RosDatatypes;
-  deserializer: (buffer: ArrayBufferView) => unknown;
+  datatypes: MessageDefinitionMap;
+  deserialize: (buffer: ArrayBufferView) => unknown;
 } {
-  const datatypes: RosDatatypes = new Map();
+  const datatypes: MessageDefinitionMap = new Map();
   const schemaBuffer = new ByteBuffer(schemaArray);
   const rawSchema = Schema.getRootAsSchema(schemaBuffer);
   const schema = rawSchema.unpack();
@@ -168,10 +171,10 @@ export function parseFlatbufferSchema(
   let typeIndex = -1;
   for (let schemaIndex = 0; schemaIndex < schema.objects.length; ++schemaIndex) {
     const object = schema.objects[schemaIndex];
-    if (object?.name === fullSchemaName) {
+    if (object?.name === schemaName) {
       typeIndex = schemaIndex;
     }
-    let fields: RosMsgField[] = [];
+    let fields: MessageDefinitionField[] = [];
     if (object?.fields == undefined) {
       continue;
     }
@@ -181,14 +184,19 @@ export function parseFlatbufferSchema(
     datatypes.set(flatbufferString(object.name), { definitions: fields });
   }
   if (typeIndex === -1) {
-    if (schema.rootTable?.name !== fullSchemaName) {
+    if (schema.rootTable?.name !== schemaName) {
       throw new Error(
-        `Type "${fullSchemaName}" is not available in the schema for "${schema.rootTable?.name}".`,
+        `Type "${schemaName}" is not available in the schema for "${schema.rootTable?.name}".`,
       );
     }
   }
   const parser = new Parser(rawSchema);
-  const deserializer = (buffer: ArrayBufferView) => {
+  // We set readDefaults=true to ensure that the reader receives default values for unset fields, or
+  // fields that were explicitly set but with ForceDefaults(false) on the writer side. This is
+  // necessary because `datatypes` does not include information about default values from the
+  // schema. See discussion: <https://github.com/foxglove/studio/pull/6256>
+  const toObject = parser.toObjectLambda(typeIndex, /*readDefaults=*/ true);
+  const deserialize = (buffer: ArrayBufferView) => {
     const byteBuffer = new ByteBuffer(
       new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength),
     );
@@ -196,9 +204,9 @@ export function parseFlatbufferSchema(
       byteBuffer,
       typeIndex,
       byteBuffer.readInt32(byteBuffer.position()) + byteBuffer.position(),
+      false,
     );
-    const obj = parser.toObject(table);
-    return obj;
+    return toObject(table);
   };
-  return { fullSchemaName, datatypes, deserializer };
+  return { datatypes, deserialize };
 }

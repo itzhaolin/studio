@@ -11,16 +11,20 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import CheckIcon from "@mui/icons-material/Check";
+import ClearIcon from "@mui/icons-material/Clear";
 import {
+  IconButton,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
-import { union } from "lodash";
+import { isEqual, isObject, union } from "lodash";
 import { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { makeStyles } from "tss-react/mui";
 import { useDebouncedCallback } from "use-debounce";
@@ -79,6 +83,87 @@ const useStyles = makeStyles<void, "copyIcon">()((_theme, _params, classes) => (
   },
 }));
 
+/**
+ * Converts a parameter value into a value that can be edited in the JsonInput. Wraps
+ * any value JsonInput can't handle in JSON.stringify.
+ */
+function editableValue(
+  value: unknown,
+): string | number | boolean | unknown[] | Uint8Array | object {
+  if (value instanceof Uint8Array) {
+    return Array.from(value);
+  } else if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    Array.isArray(value) ||
+    isObject(value)
+  ) {
+    return value;
+  } else {
+    return JSON.stringify(value) ?? "";
+  }
+}
+
+/**
+ * Converts a parameter value into a string we can display value or use as a title.
+ */
+function displayableValue(value: unknown): string {
+  if (value == undefined) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  } else if (value instanceof Uint8Array) {
+    return JSON.stringify(Array.from(value)) ?? "";
+  }
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  } else {
+    return JSON.stringify(value) ?? "";
+  }
+}
+
+function SubmittableJsonInput(props: {
+  value: unknown;
+  onSubmit: (newVal: unknown) => void;
+}): ReactElement {
+  const [value, setValue] = useState<unknown>(editableValue(props.value));
+
+  return (
+    <Stack direction="row">
+      <JsonInput
+        value={value}
+        onChange={(newVal) => {
+          setValue(newVal);
+        }}
+      />
+      {!isEqual(editableValue(value), editableValue(props.value)) && [
+        <Tooltip key="submit" title="Submit change">
+          <IconButton
+            onClick={() => {
+              if (props.value instanceof Uint8Array) {
+                props.onSubmit(new Uint8Array(value as number[]));
+              } else {
+                props.onSubmit(value);
+              }
+            }}
+          >
+            <CheckIcon />
+          </IconButton>
+        </Tooltip>,
+        <Tooltip key="reset" title="Reset">
+          <IconButton key="reset" onClick={() => setValue(editableValue(props.value))}>
+            <ClearIcon />
+          </IconButton>
+        </Tooltip>,
+      ]}
+    </Stack>
+  );
+}
+
 function Parameters(): ReactElement {
   const { classes } = useStyles();
 
@@ -91,7 +176,7 @@ function Parameters(): ReactElement {
       (name: string, value: ParameterValue) => setParameterUnbounced(name, value),
       [setParameterUnbounced],
     ),
-    200,
+    500,
   );
 
   const [changedParameters, setChangedParameters] = useState<string[]>([]);
@@ -103,7 +188,7 @@ function Parameters(): ReactElement {
 
   // Don't run the animation when the Table first renders
   const skipAnimation = useRef<boolean>(true);
-  const previousParametersRef = useRef<Map<string, unknown> | undefined>(parameters);
+  const previousParametersRef = useRef<ReadonlyMap<string, unknown> | undefined>(parameters);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => (skipAnimation.current = false), ANIMATION_RESET_DELAY_MS);
@@ -120,7 +205,7 @@ function Parameters(): ReactElement {
       Array.from(previousParametersRef.current?.keys() ?? []),
     ).filter((name) => {
       const previousValue = previousParametersRef.current?.get(name);
-      return previousValue !== parameters.get(name);
+      return !isEqual(previousValue, parameters.get(name));
     });
 
     setChangedParameters(newChangedParameters);
@@ -152,13 +237,13 @@ function Parameters(): ReactElement {
           </TableHead>
           <TableBody>
             {parameterNames.map((name) => {
-              const value = JSON.stringify(parameters.get(name)) ?? "";
+              const displayValue = displayableValue(parameters.get(name));
 
               return (
                 <TableRow
                   hover
                   className={classes.tableRow}
-                  key={`parameter-${name}`}
+                  key={`parameter-${name}-${displayValue}`}
                   selected={!skipAnimation.current && changedParameters.includes(name)}
                 >
                   <TableCell variant="head">
@@ -169,18 +254,22 @@ function Parameters(): ReactElement {
 
                   {canSetParams ? (
                     <TableCell padding="none">
-                      <JsonInput
-                        dataTestId={`parameter-value-input-${value}`}
-                        value={value}
-                        onChange={(newVal) => {
+                      <SubmittableJsonInput
+                        value={parameters.get(name)}
+                        onSubmit={(newVal) => {
                           setParameter(name, newVal as ParameterValue);
                         }}
                       />
                     </TableCell>
                   ) : (
                     <TableCell>
-                      <Typography noWrap title={value} variant="inherit" color="text.secondary">
-                        {value}
+                      <Typography
+                        noWrap
+                        title={displayValue}
+                        variant="inherit"
+                        color="text.secondary"
+                      >
+                        {displayValue}
                       </Typography>
                     </TableCell>
                   )}
@@ -191,7 +280,7 @@ function Parameters(): ReactElement {
                       edge="end"
                       size="small"
                       iconSize="small"
-                      value={`${name}: ${value}`}
+                      getText={() => `${name}: ${displayValue}`}
                     />
                   </TableCell>
                 </TableRow>

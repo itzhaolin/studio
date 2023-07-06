@@ -9,8 +9,12 @@ import { PosesInFrame } from "@foxglove/schemas";
 import { SettingsTreeAction, SettingsTreeFields, Topic } from "@foxglove/studio";
 import type { RosValue } from "@foxglove/studio-base/players/types";
 
+import { Axis, AXIS_LENGTH } from "./Axis";
+import { createArrowMarker } from "./Poses";
+import { RenderableArrow } from "./markers/RenderableArrow";
+import { RenderableLineStrip } from "./markers/RenderableLineStrip";
+import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
 import { BaseUserData, Renderable } from "../Renderable";
-import { Renderer } from "../Renderer";
 import { PartialMessage, PartialMessageEvent, SceneExtension } from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import { makeRgba, rgbaGradient, rgbaToCssString, stringToRgba } from "../color";
@@ -33,13 +37,9 @@ import {
   fieldLineWidth,
   fieldScaleVec3,
   fieldSize,
-  PRECISION_DISTANCE,
 } from "../settings";
+import { topicIsConvertibleToSchema } from "../topicIsConvertibleToSchema";
 import { makePose, Pose } from "../transforms";
-import { Axis, AXIS_LENGTH } from "./Axis";
-import { createArrowMarker } from "./Poses";
-import { RenderableArrow } from "./markers/RenderableArrow";
-import { RenderableLineStrip } from "./markers/RenderableLineStrip";
 
 type GradientRgba = [ColorRGBA, ColorRGBA];
 type Gradient = [string, string];
@@ -139,12 +139,28 @@ export class PoseArrayRenderable extends Renderable<PoseArrayUserData> {
 }
 
 export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
-  public constructor(renderer: Renderer) {
+  public constructor(renderer: IRenderer) {
     super("foxglove.PoseArrays", renderer);
+  }
 
-    renderer.addDatatypeSubscriptions(POSE_ARRAY_DATATYPES, this.handlePoseArray);
-    renderer.addDatatypeSubscriptions(POSES_IN_FRAME_DATATYPES, this.handlePosesInFrame);
-    renderer.addDatatypeSubscriptions(NAV_PATH_DATATYPES, this.handleNavPath);
+  public override getSubscriptions(): readonly AnyRendererSubscription[] {
+    return [
+      {
+        type: "schema",
+        schemaNames: POSE_ARRAY_DATATYPES,
+        subscription: { handler: this.#handlePoseArray },
+      },
+      {
+        type: "schema",
+        schemaNames: POSES_IN_FRAME_DATATYPES,
+        subscription: { handler: this.#handlePosesInFrame },
+      },
+      {
+        type: "schema",
+        schemaNames: NAV_PATH_DATATYPES,
+        subscription: { handler: this.#handleNavPath },
+      },
+    ];
   }
 
   public override settingsNodes(): SettingsTreeEntry[] {
@@ -153,47 +169,50 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     const entries: SettingsTreeEntry[] = [];
     for (const topic of this.renderer.topics ?? []) {
       if (
-        POSE_ARRAY_DATATYPES.has(topic.datatype) ||
-        NAV_PATH_DATATYPES.has(topic.datatype) ||
-        POSES_IN_FRAME_DATATYPES.has(topic.datatype)
+        !(
+          topicIsConvertibleToSchema(topic, POSE_ARRAY_DATATYPES) ||
+          topicIsConvertibleToSchema(topic, NAV_PATH_DATATYPES) ||
+          topicIsConvertibleToSchema(topic, POSES_IN_FRAME_DATATYPES)
+        )
       ) {
-        const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPoseArray>;
-        const displayType = config.type ?? getDefaultType(topic);
-        const { axisScale, lineWidth } = config;
-        const arrowScale = config.arrowScale ?? DEFAULT_ARROW_SCALE;
-        const gradient = config.gradient ?? DEFAULT_GRADIENT_STR;
-
-        const fields: SettingsTreeFields = {
-          type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: displayType },
-        };
-        switch (displayType) {
-          case "axis":
-            fields["axisScale"] = fieldSize("Scale", axisScale, PRECISION_DISTANCE);
-            break;
-          case "arrow":
-            fields["arrowScale"] = fieldScaleVec3("Scale", arrowScale);
-            break;
-          case "line":
-            fields["lineWidth"] = fieldLineWidth("Line Width", lineWidth, DEFAULT_LINE_WIDTH);
-            break;
-        }
-
-        // Axis does not currently support gradients. This could possibly be done with tinting
-        if (displayType !== "axis") {
-          fields["gradient"] = fieldGradient("Gradient", gradient);
-        }
-
-        entries.push({
-          path: ["topics", topic.name],
-          node: {
-            label: topic.name,
-            icon: NAV_PATH_DATATYPES.has(topic.datatype) ? "Timeline" : "Flag",
-            fields,
-            visible: config.visible ?? DEFAULT_SETTINGS.visible,
-            handler,
-          },
-        });
+        continue;
       }
+      const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPoseArray>;
+      const displayType = config.type ?? getDefaultType(topic);
+      const { axisScale, lineWidth } = config;
+      const arrowScale = config.arrowScale ?? DEFAULT_ARROW_SCALE;
+      const gradient = config.gradient ?? DEFAULT_GRADIENT_STR;
+
+      const fields: SettingsTreeFields = {
+        type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: displayType },
+      };
+      switch (displayType) {
+        case "axis":
+          fields["axisScale"] = fieldSize("Scale", axisScale, DEFAULT_AXIS_SCALE);
+          break;
+        case "arrow":
+          fields["arrowScale"] = fieldScaleVec3("Scale", arrowScale);
+          break;
+        case "line":
+          fields["lineWidth"] = fieldLineWidth("Line Width", lineWidth, DEFAULT_LINE_WIDTH);
+          break;
+      }
+
+      // Axis does not currently support gradients. This could possibly be done with tinting
+      if (displayType !== "axis") {
+        fields["gradient"] = fieldGradient("Gradient", gradient);
+      }
+
+      entries.push({
+        path: ["topics", topic.name],
+        node: {
+          label: topic.name,
+          icon: topicIsConvertibleToSchema(topic, NAV_PATH_DATATYPES) ? "Timeline" : "Flag",
+          fields,
+          visible: config.visible ?? DEFAULT_SETTINGS.visible,
+          handler,
+        },
+      });
     }
     return entries;
   }
@@ -213,39 +232,40 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
       const settings = this.renderer.config.topics[topicName] as
         | Partial<LayerSettingsPoseArray>
         | undefined;
-      this._updatePoseArrayRenderable(
+      const defaultType = { type: getDefaultType(this.renderer.topicsByName?.get(topicName)) };
+      this.#updatePoseArrayRenderable(
         renderable,
         renderable.userData.poseArrayMessage,
         renderable.userData.originalMessage,
         renderable.userData.receiveTime,
-        { ...DEFAULT_SETTINGS, ...settings },
+        { ...DEFAULT_SETTINGS, ...defaultType, ...settings },
       );
     }
   };
 
-  private handlePoseArray = (messageEvent: PartialMessageEvent<PoseArray>): void => {
+  #handlePoseArray = (messageEvent: PartialMessageEvent<PoseArray>): void => {
     const poseArrayMessage = normalizePoseArray(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
+    this.#addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
   };
 
-  private handleNavPath = (messageEvent: PartialMessageEvent<NavPath>): void => {
+  #handleNavPath = (messageEvent: PartialMessageEvent<NavPath>): void => {
     if (!validateNavPath(messageEvent, this.renderer)) {
       return;
     }
 
     const poseArrayMessage = normalizeNavPathToPoseArray(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
+    this.#addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
   };
 
-  private handlePosesInFrame = (messageEvent: PartialMessageEvent<PosesInFrame>): void => {
+  #handlePosesInFrame = (messageEvent: PartialMessageEvent<PosesInFrame>): void => {
     const poseArrayMessage = normalizePosesInFrameToPoseArray(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
+    this.#addPoseArray(messageEvent.topic, poseArrayMessage, messageEvent.message, receiveTime);
   };
 
-  private addPoseArray(
+  #addPoseArray(
     topic: string,
     poseArrayMessage: PoseArray,
     originalMessage: Record<string, RosValue>,
@@ -278,7 +298,7 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
       this.renderables.set(topic, renderable);
     }
 
-    this._updatePoseArrayRenderable(
+    this.#updatePoseArrayRenderable(
       renderable,
       poseArrayMessage,
       originalMessage,
@@ -287,7 +307,7 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     );
   }
 
-  private _createAxesToMatchPoses(
+  #createAxesToMatchPoses(
     renderable: PoseArrayRenderable,
     poseArray: PoseArray,
     topic: string,
@@ -319,7 +339,7 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     }
   }
 
-  private _createArrowsToMatchPoses(
+  #createArrowsToMatchPoses(
     renderable: PoseArrayRenderable,
     poseArray: PoseArray,
     topic: string,
@@ -357,7 +377,7 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     }
   }
 
-  private _updatePoseArrayRenderable(
+  #updatePoseArrayRenderable(
     renderable: PoseArrayRenderable,
     poseArrayMessage: PoseArray,
     originalMessage: Record<string, RosValue>,
@@ -426,13 +446,13 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     // Update the pose for each pose renderable
     switch (settings.type) {
       case "axis":
-        this._createAxesToMatchPoses(renderable, poseArrayMessage, topic);
+        this.#createAxesToMatchPoses(renderable, poseArrayMessage, topic);
         for (let i = 0; i < poseArrayMessage.poses.length; i++) {
           setObjectPose(renderable.userData.axes[i]!, poseArrayMessage.poses[i]!);
         }
         break;
       case "arrow":
-        this._createArrowsToMatchPoses(renderable, poseArrayMessage, topic, colorStart, colorEnd);
+        this.#createArrowsToMatchPoses(renderable, poseArrayMessage, topic, colorStart, colorEnd);
         for (let i = 0; i < poseArrayMessage.poses.length; i++) {
           setObjectPose(renderable.userData.arrows[i]!, poseArrayMessage.poses[i]!);
         }
@@ -452,7 +472,7 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
 }
 
 function getDefaultType(topic: Topic | undefined): DisplayType {
-  return topic != undefined && NAV_PATH_DATATYPES.has(topic.datatype) ? "line" : DEFAULT_TYPE;
+  return topic != undefined && NAV_PATH_DATATYPES.has(topic.schemaName) ? "line" : DEFAULT_TYPE;
 }
 
 function setObjectPose(object: THREE.Object3D, pose: Pose): void {
@@ -505,7 +525,7 @@ function normalizePoseArray(poseArray: PartialMessage<PoseArray>): PoseArray {
 function normalizeNavPathToPoseArray(navPath: PartialMessage<NavPath>): PoseArray {
   return {
     header: normalizeHeader(navPath.header),
-    poses: navPath.poses?.map((p) => normalizePose(p.pose)) ?? [],
+    poses: navPath.poses?.map((p) => normalizePose(p?.pose)) ?? [],
   };
 }
 
@@ -516,12 +536,12 @@ function normalizePosesInFrameToPoseArray(poseArray: PartialMessage<PosesInFrame
   };
 }
 
-function validateNavPath(messageEvent: PartialMessageEvent<NavPath>, renderer: Renderer): boolean {
+function validateNavPath(messageEvent: PartialMessageEvent<NavPath>, renderer: IRenderer): boolean {
   const { topic, message: navPath } = messageEvent;
   if (navPath.poses) {
     const baseFrameId = renderer.normalizeFrameId(navPath.header?.frame_id ?? "");
     for (const pose of navPath.poses) {
-      const curFrameId = renderer.normalizeFrameId(pose.header?.frame_id ?? "");
+      const curFrameId = renderer.normalizeFrameId(pose?.header?.frame_id ?? "");
       if (baseFrameId !== curFrameId) {
         renderer.settings.errors.addToTopic(
           topic,

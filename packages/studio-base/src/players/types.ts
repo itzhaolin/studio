@@ -11,11 +11,10 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { DeepReadonly } from "ts-essentials";
-
-import { RosMsgDefinition } from "@foxglove/rosmsg";
+import { MessageDefinition } from "@foxglove/message-definition";
 import { Time } from "@foxglove/rostime";
 import type { MessageEvent, ParameterValue } from "@foxglove/studio";
+import { Immutable } from "@foxglove/studio";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { Range } from "@foxglove/studio-base/util/ranges";
@@ -28,7 +27,7 @@ export type MessageDefinitionsByTopic = {
   [topic: string]: string;
 };
 export type ParsedMessageDefinitionsByTopic = {
-  [topic: string]: RosMsgDefinition[];
+  [topic: string]: MessageDefinition[];
 };
 
 // A `Player` is a class that manages playback state. It manages subscriptions,
@@ -46,7 +45,7 @@ export interface Player {
   close(): void;
   // Set a new set of subscriptions/advertisers. This might trigger fetching
   // new data, which might in turn trigger a backfill of messages.
-  setSubscriptions(subscriptions: SubscribePayload[]): void;
+  setSubscriptions(subscriptions: Immutable<SubscribePayload[]>): void;
   setPublishers(publishers: AdvertiseOptions[]): void;
   // Modify a remote parameter such as a rosparam.
   setParameter(key: string, value: ParameterValue): void;
@@ -59,7 +58,7 @@ export interface Player {
   // Basic playback controls. Available if `capabilities` contains PlayerCapabilities.playbackControl.
   startPlayback?(): void;
   pausePlayback?(): void;
-  seekPlayback?(time: Time, backfillDuration?: Time): void;
+  seekPlayback?(time: Time): void;
   playUntil?(time: Time): void;
   // Seek to a particular time. Might trigger backfilling.
   // If the Player supports non-real-time speeds (i.e. PlayerState#capabilities contains
@@ -86,7 +85,7 @@ export type PlayerProblem = {
   tip?: string;
 };
 
-export type PlayerURLState = DeepReadonly<{
+export type PlayerURLState = Immutable<{
   sourceId: string;
   parameters?: Record<string, string>;
 }>;
@@ -100,7 +99,7 @@ export type PlayerState = {
 
   // Capabilities of this particular `Player`, which are not shared across all players.
   // See `const PlayerCapabilities` for more details.
-  capabilities: typeof PlayerCapabilities[keyof typeof PlayerCapabilities][];
+  capabilities: (typeof PlayerCapabilities)[keyof typeof PlayerCapabilities][];
 
   /**
    * Identifies the semantics of the data being played back, such as which topics or parameters are
@@ -134,7 +133,7 @@ export type PlayerStateActiveData = {
   // and should be immediately following the previous array of messages that was emitted as part of
   // this state. If there is a discontinuity in messages, `lastSeekTime` should be different than
   // the previous state. Panels collect these messages using the `PanelAPI`.
-  messages: readonly MessageEvent<unknown>[];
+  messages: readonly MessageEvent[];
   totalBytesReceived: number; // always-increasing
 
   // The current playback position, which will be shown in the playback bar. This time should be
@@ -195,6 +194,13 @@ export type PlayerStateActiveData = {
   // A map of parameter names to parameter values, used to describe remote parameters such as
   // rosparams.
   parameters?: Map<string, ParameterValue>;
+
+  /** Set to true when `messages` has been recomputed without seek, backfill or playback.
+   * For example: when global variables changes, user-scripts needs to be rerun to recompute
+   * messages. This variable would be set to true to indicate that `messages` may have changed
+   * without a seek or backfill occurring.
+   */
+  messagesRecomputed?: boolean;
 };
 
 // Represents a ROS topic, though the actual data does not need to come from a ROS system.
@@ -204,15 +210,21 @@ export type Topic = {
   // a consistent representation for topics that people recognize though.
   name: string;
   // Name of the datatype (see `type PlayerStateActiveData` for details).
-  datatype: string;
+  schemaName: string | undefined;
+  // Name of the topic before topic aliasing, if any.
+  aliasedFromName?: string;
 };
+
+export type TopicWithSchemaName = Topic & { schemaName: string };
 
 export type TopicStats = {
   // The number of messages observed on the topic.
   numMessages: number;
-  // Timestamp of the first observed message on this topic.
+  // Timestamp of the first observed message on this topic. Only set for static data sources such as
+  // local files or servers that provide a fixed set of data.
   firstMessageTime?: Time;
-  // Timestamp of the last observed message on this topic.
+  // Timestamp of the last observed message on this topic. Only set for static data sources such as
+  // local files or servers that provide a fixed set of data.
   lastMessageTime?: Time;
 };
 
@@ -242,7 +254,7 @@ export type RosObject = Readonly<{
 // the underlying ArrayBuffers.
 export type MessageBlock = {
   readonly messagesByTopic: {
-    readonly [topic: string]: MessageEvent<unknown>[];
+    readonly [topic: string]: MessageEvent[];
   };
   readonly sizeInBytes: number;
 };
@@ -268,20 +280,20 @@ export type SubscriptionPreloadType =
 
 // Represents a subscription to a single topic, for use in `setSubscriptions`.
 export type SubscribePayload = {
-  // The topic name to subscribe to.
+  // The topic name to subscribe to
   topic: string;
   preloadType?: SubscriptionPreloadType;
 };
 
 // Represents a single topic publisher, for use in `setPublishers`.
 export type AdvertiseOptions = {
-  // The topic name
+  /** The topic name */
   topic: string;
 
-  // The datatype name
-  datatype: string;
+  /** The schema name */
+  schemaName: string;
 
-  // Additional advertise options
+  /** Additional player-specific advertise options */
   options?: Record<string, unknown>;
 };
 
@@ -314,7 +326,6 @@ export const PlayerCapabilities = {
 export interface PlayerMetricsCollectorInterface {
   setProperty(key: string, value: string | number | boolean): void;
   playerConstructed(): void;
-  initialized(args?: { isSampleDataSource: boolean }): void;
   play(speed: number): void;
   seek(time: Time): void;
   setSpeed(speed: number): void;

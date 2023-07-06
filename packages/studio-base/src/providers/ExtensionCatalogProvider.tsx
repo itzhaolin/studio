@@ -2,87 +2,114 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { PropsWithChildren, useEffect, useState } from "react";
+import React, { PropsWithChildren, useEffect, useState } from "react";
 import ReactDOM from "react-dom";
-import { createStore, StoreApi } from "zustand";
+import { StoreApi, createStore } from "zustand";
 
 import Logger from "@foxglove/log";
-import { ExtensionContext, ExtensionModule } from "@foxglove/studio";
+import {
+  ExtensionContext,
+  ExtensionModule,
+  RegisterMessageConverterArgs,
+  TopicAliasFunction,
+} from "@foxglove/studio";
 import {
   ExtensionCatalog,
   ExtensionCatalogContext,
   RegisteredPanel,
-  useExtensionCatalog,
 } from "@foxglove/studio-base/context/ExtensionCatalogContext";
+import { TopicAliasFunctions } from "@foxglove/studio-base/players/TopicAliasingPlayer/aliasing";
 import { ExtensionLoader } from "@foxglove/studio-base/services/ExtensionLoader";
 import { ExtensionInfo, ExtensionNamespace } from "@foxglove/studio-base/types/Extensions";
 
 const log = Logger.getLogger(__filename);
 
-async function registerExtensionPanels(
-  extensions: ExtensionInfo[],
-  loadExtension: ExtensionLoader["loadExtension"],
-): Promise<Record<string, RegisteredPanel>> {
+type ContributionPoints = {
+  panels: Record<string, RegisteredPanel>;
+  messageConverters: RegisterMessageConverterArgs<unknown>[];
+  topicAliasFunctions: TopicAliasFunctions;
+};
+
+function activateExtension(
+  extension: ExtensionInfo,
+  unwrappedExtensionSource: string,
+): ContributionPoints {
   // registered panels stored by their fully qualified id
   // the fully qualified id is the extension name + panel name
   const panels: Record<string, RegisteredPanel> = {};
 
-  for (const extension of extensions) {
-    log.debug(`Activating extension ${extension.qualifiedName}`);
+  const messageConverters: RegisterMessageConverterArgs<unknown>[] = [];
 
-    const module = { exports: {} };
-    const require = (name: string) => {
-      return { react: React, "react-dom": ReactDOM }[name];
-    };
+  const topicAliasFunctions: ContributionPoints["topicAliasFunctions"] = [];
 
-    const extensionMode =
-      process.env.NODE_ENV === "production"
-        ? "production"
-        : process.env.NODE_ENV === "test"
-        ? "test"
-        : "development";
+  log.debug(`Activating extension ${extension.qualifiedName}`);
 
-    const ctx: ExtensionContext = {
-      mode: extensionMode,
+  const module = { exports: {} };
+  const require = (name: string) => {
+    return { react: React, "react-dom": ReactDOM }[name];
+  };
 
-      registerPanel(params) {
-        log.debug(`Extension ${extension.qualifiedName} registering panel: ${params.name}`);
+  const extensionMode =
+    process.env.NODE_ENV === "production"
+      ? "production"
+      : process.env.NODE_ENV === "test"
+      ? "test"
+      : "development";
 
-        const fullId = `${extension.qualifiedName}.${params.name}`;
-        if (panels[fullId]) {
-          log.warn(`Panel ${fullId} is already registered`);
-          return;
-        }
+  const ctx: ExtensionContext = {
+    mode: extensionMode,
 
-        panels[fullId] = {
-          extensionName: extension.qualifiedName,
-          extensionNamespace: extension.namespace,
-          registration: params,
-        };
-      },
-    };
+    registerPanel: (params) => {
+      log.debug(`Extension ${extension.qualifiedName} registering panel: ${params.name}`);
 
-    try {
-      const unwrappedExtensionSource = await loadExtension(extension.id);
+      const fullId = `${extension.qualifiedName}.${params.name}`;
+      if (panels[fullId]) {
+        log.warn(`Panel ${fullId} is already registered`);
+        return;
+      }
 
-      // eslint-disable-next-line no-new-func
-      const fn = new Function("module", "require", unwrappedExtensionSource);
+      panels[fullId] = {
+        extensionName: extension.qualifiedName,
+        extensionNamespace: extension.namespace,
+        registration: params,
+      };
+    },
 
-      // load the extension module exports
-      fn(module, require, {});
-      const wrappedExtensionModule = module.exports as ExtensionModule;
+    registerMessageConverter: <Src,>(args: RegisterMessageConverterArgs<Src>) => {
+      log.debug(
+        `Extension ${extension.qualifiedName} registering message converter from: ${args.fromSchemaName} to: ${args.toSchemaName}`,
+      );
+      messageConverters.push(args as RegisterMessageConverterArgs<unknown>);
+    },
 
-      wrappedExtensionModule.activate(ctx);
-    } catch (err) {
-      log.error(err);
-    }
+    registerTopicAliases: (aliasFunction: TopicAliasFunction) => {
+      topicAliasFunctions.push({ aliasFunction, extensionId: extension.id });
+    },
+  };
+
+  try {
+    // eslint-disable-next-line no-new-func
+    const fn = new Function("module", "require", unwrappedExtensionSource);
+
+    // load the extension module exports
+    fn(module, require, {});
+    const wrappedExtensionModule = module.exports as ExtensionModule;
+
+    wrappedExtensionModule.activate(ctx);
+  } catch (err) {
+    log.error(err);
   }
 
-  return panels;
+  return {
+    panels,
+    messageConverters,
+    topicAliasFunctions,
+  };
 }
 
 export function createExtensionRegistryStore(
   loaders: readonly ExtensionLoader[],
+  mockMessageConverters: readonly RegisterMessageConverterArgs<unknown>[] | undefined,
 ): StoreApi<ExtensionCatalog> {
   return createStore((set, get) => ({
     downloadExtension: async (url: string) => {
@@ -100,35 +127,54 @@ export function createExtensionRegistryStore(
       return info;
     },
 
-    loadExtension: async (id: string) => {
-      for (const loader of loaders) {
-        try {
-          return await loader.loadExtension(id);
-        } catch (error) {
-          log.debug(error);
-        }
+    refreshExtensions: async () => {
+      if (loaders.length === 0) {
+        return;
       }
 
-      throw new Error(`Extension ${id} not found`);
-    },
-
-    refreshExtensions: async () => {
-      const extensionList = (
-        await Promise.all(loaders.map(async (loader) => await loader.getExtensions()))
-      )
-        .flat()
-        .sort();
+      const extensionList: ExtensionInfo[] = [];
+      const allContributionPoints: ContributionPoints = {
+        panels: {},
+        messageConverters: [],
+        topicAliasFunctions: [],
+      };
+      for (const loader of loaders) {
+        try {
+          for (const extension of await loader.getExtensions()) {
+            try {
+              extensionList.push(extension);
+              const unwrappedExtensionSource = await loader.loadExtension(extension.id);
+              const contributionPoints = activateExtension(extension, unwrappedExtensionSource);
+              Object.assign(allContributionPoints.panels, contributionPoints.panels);
+              allContributionPoints.messageConverters.push(...contributionPoints.messageConverters);
+              allContributionPoints.topicAliasFunctions.push(
+                ...contributionPoints.topicAliasFunctions,
+              );
+            } catch (err) {
+              log.error("Error loading extension", err);
+            }
+          }
+        } catch (err) {
+          log.error("Error loading extension list", err);
+        }
+      }
       log.debug(`Found ${extensionList.length} extension(s)`);
-      const panels = await registerExtensionPanels(
-        extensionList,
-        async (id: string) => await get().loadExtension(id),
-      );
-      set({ installedExtensions: extensionList, installedPanels: panels });
+      set({
+        installedExtensions: extensionList,
+        installedPanels: allContributionPoints.panels,
+        installedMessageConverters: allContributionPoints.messageConverters,
+        installedTopicAliasFunctions: allContributionPoints.topicAliasFunctions,
+      });
     },
 
-    installedExtensions: undefined,
+    // If there are no loaders then we know there will not be any installed extensions
+    installedExtensions: loaders.length === 0 ? [] : undefined,
 
-    installedPanels: undefined,
+    installedPanels: {},
+
+    installedMessageConverters: mockMessageConverters ?? [],
+
+    installedTopicAliasFunctions: [],
 
     uninstallExtension: async (namespace: ExtensionNamespace, id: string) => {
       const namespacedLoader = loaders.find((loader) => loader.namespace === namespace);
@@ -141,25 +187,23 @@ export function createExtensionRegistryStore(
   }));
 }
 
-function InitialRefreshAdapter(): ReactNull {
-  const refreshExtensions = useExtensionCatalog((state) => state.refreshExtensions);
+export default function ExtensionCatalogProvider({
+  children,
+  loaders,
+  mockMessageConverters,
+}: PropsWithChildren<{
+  loaders: readonly ExtensionLoader[];
+  mockMessageConverters?: readonly RegisterMessageConverterArgs<unknown>[];
+}>): JSX.Element {
+  const [store] = useState(createExtensionRegistryStore(loaders, mockMessageConverters));
+
+  // Request an initial refresh on first mount
+  const refreshExtensions = store.getState().refreshExtensions;
   useEffect(() => {
     refreshExtensions().catch((err) => log.error(err));
   }, [refreshExtensions]);
 
-  return ReactNull;
-}
-
-export default function ExtensionCatalogProvider({
-  children,
-  loaders,
-}: PropsWithChildren<{ loaders: readonly ExtensionLoader[] }>): JSX.Element {
-  const [store] = useState(createExtensionRegistryStore(loaders));
-
   return (
-    <ExtensionCatalogContext.Provider value={store}>
-      <InitialRefreshAdapter />
-      {children}
-    </ExtensionCatalogContext.Provider>
+    <ExtensionCatalogContext.Provider value={store}>{children}</ExtensionCatalogContext.Provider>
   );
 }

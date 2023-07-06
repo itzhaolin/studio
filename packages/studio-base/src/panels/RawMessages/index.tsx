@@ -11,35 +11,21 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import DiffIcon from "@mui/icons-material/Difference";
-import DiffOutlinedIcon from "@mui/icons-material/DifferenceOutlined";
-import UnfoldLessIcon from "@mui/icons-material/UnfoldLess";
-import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
-import {
-  Checkbox,
-  FormControlLabel,
-  IconButton,
-  MenuItem,
-  Select,
-  SelectChangeEvent,
-  useTheme,
-  Typography,
-} from "@mui/material";
+import { Checkbox, FormControlLabel, Typography, useTheme } from "@mui/material";
 // eslint-disable-next-line no-restricted-imports
-import { first, isEqual, get, last, padStart } from "lodash";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { first, get, isEqual, last, padStart } from "lodash";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactHoverObserver from "react-hover-observer";
 import Tree from "react-json-tree";
-import { DeepReadonly } from "ts-essentials";
 import { makeStyles } from "tss-react/mui";
 
+import { Immutable } from "@foxglove/studio";
 import { useDataSourceInfo } from "@foxglove/studio-base/PanelAPI";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import useGetItemStringWithTimezone from "@foxglove/studio-base/components/JsonTree/useGetItemStringWithTimezone";
-import MessagePathInput from "@foxglove/studio-base/components/MessagePathSyntax/MessagePathInput";
 import {
-  RosPath,
   MessagePathStructureItem,
+  RosPath,
 } from "@foxglove/studio-base/components/MessagePathSyntax/constants";
 import {
   messagePathStructures,
@@ -50,12 +36,12 @@ import { MessagePathDataItem } from "@foxglove/studio-base/components/MessagePat
 import { useMessageDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/useMessageDataItem";
 import Panel from "@foxglove/studio-base/components/Panel";
 import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
-import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
 import Stack from "@foxglove/studio-base/components/Stack";
+import { Toolbar } from "@foxglove/studio-base/panels/RawMessages/Toolbar";
 import getDiff, {
+  DiffObject,
   diffLabels,
   diffLabelsByLabelText,
-  DiffObject,
 } from "@foxglove/studio-base/panels/RawMessages/getDiff";
 import { Topic } from "@foxglove/studio-base/players/types";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
@@ -63,25 +49,21 @@ import { useJsonTreeTheme } from "@foxglove/studio-base/util/globalConstants";
 import { enumValuesByDatatypeAndField } from "@foxglove/studio-base/util/selectors";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-import DiffSpan from "./DiffSpan";
+import { DiffSpan } from "./DiffSpan";
 import DiffStats from "./DiffStats";
 import MaybeCollapsedValue from "./MaybeCollapsedValue";
 import Metadata from "./Metadata";
 import Value from "./Value";
 import {
   ValueAction,
-  getValueActionForValue,
   getStructureItemForPath,
+  getValueActionForValue,
 } from "./getValueActionForValue";
-import helpContent from "./index.help.md";
-import { RawMessagesPanelConfig } from "./types";
+import { Constants, RawMessagesPanelConfig } from "./types";
 import { DATA_ARRAY_PREVIEW_LIMIT, generateDeepKeyPaths } from "./utils";
 
-export const CUSTOM_METHOD = "custom";
-export const PREV_MSG_METHOD = "previous message";
-
 type Props = {
-  config: DeepReadonly<RawMessagesPanelConfig>;
+  config: Immutable<RawMessagesPanelConfig>;
   saveConfig: SaveConfig<RawMessagesPanelConfig>;
 };
 
@@ -106,18 +88,13 @@ function maybeDeepParse(val: unknown) {
 }
 
 const useStyles = makeStyles()((theme) => ({
-  iconButton: {
-    "&.MuiIconButton-root": {
-      padding: theme.spacing(0.25),
-    },
-  },
   topic: {
     fontFamily: fonts.SANS_SERIF,
-    fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+    fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
   },
   big: {
     "&.MuiTypography-root": {
-      fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+      fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
     },
   },
   hoverObserver: {
@@ -154,11 +131,11 @@ function RawMessages(props: Props) {
     [topicRosPath, topics],
   );
   const rootStructureItem: MessagePathStructureItem | undefined = useMemo(() => {
-    if (!topic || !topicRosPath) {
+    if (!topic || !topicRosPath || topic.schemaName == undefined) {
       return;
     }
     return traverseStructure(
-      messagePathStructures(datatypes)[topic.datatype],
+      messagePathStructures(datatypes)[topic.schemaName],
       topicRosPath.messagePath,
     ).structureItem;
   }, [datatypes, topic, topicRosPath]);
@@ -171,7 +148,7 @@ function RawMessages(props: Props) {
   const currTickObj = matchedMessages[matchedMessages.length - 1];
   const prevTickObj = matchedMessages[matchedMessages.length - 2];
 
-  const inTimetickDiffMode = diffEnabled && diffMethod === PREV_MSG_METHOD;
+  const inTimetickDiffMode = diffEnabled && diffMethod === Constants.PREV_MSG_METHOD;
   const baseItem = inTimetickDiffMode ? prevTickObj : currTickObj;
   const diffItem = inTimetickDiffMode ? currTickObj : diffTopicObj;
 
@@ -339,10 +316,13 @@ function RawMessages(props: Props) {
           if (structureItem) {
             const childStructureItem = getStructureItemForPath(
               structureItem,
-              keyPath.slice(0, -1).reverse().join(","),
+              keyPath.slice(0, -1).reverse(),
             );
             if (childStructureItem) {
-              const field = keyPath[0];
+              // if it's an array index (typeof number) then we want the nearest named array which will be typeof string
+
+              const keyPathIndex = keyPath.findIndex((key) => typeof key === "string");
+              const field = keyPath[keyPathIndex];
               if (typeof field === "string") {
                 const enumMapping = enumValuesByDatatypeAndField(datatypes);
                 const datatype = childStructureItem.datatype;
@@ -398,7 +378,7 @@ function RawMessages(props: Props) {
     if (topicPath.length === 0) {
       return <EmptyState>No topic selected</EmptyState>;
     }
-    if (diffEnabled && diffMethod === CUSTOM_METHOD && (!baseItem || !diffItem)) {
+    if (diffEnabled && diffMethod === Constants.CUSTOM_METHOD && (!baseItem || !diffItem)) {
       return (
         <EmptyState>{`Waiting to diff next messages from "${topicPath}" and "${diffTopicPath}"`}</EmptyState>
       );
@@ -431,13 +411,19 @@ function RawMessages(props: Props) {
       : {};
 
     return (
-      <Stack className={classes.topic} flex="auto" overflowX="hidden" paddingLeft={0.75}>
+      <Stack
+        className={classes.topic}
+        flex="auto"
+        overflowX="hidden"
+        paddingLeft={0.75}
+        data-testid="panel-scroll-container"
+      >
         <Metadata
           data={data}
           diffData={diffData}
           diff={diff}
           message={baseItem.messageEvent}
-          {...(topic ? { datatype: topic.datatype } : undefined)}
+          {...(topic ? { datatype: topic.schemaName } : undefined)}
           {...(diffItem ? { diffMessage: diffItem.messageEvent } : undefined)}
         />
         {shouldDisplaySingleVal ? (
@@ -651,62 +637,18 @@ function RawMessages(props: Props) {
 
   return (
     <Stack flex="auto" overflow="hidden" position="relative">
-      <PanelToolbar helpContent={helpContent}>
-        <IconButton
-          className={classes.iconButton}
-          title="Toggle diff"
-          onClick={onToggleDiff}
-          color={diffEnabled ? "default" : "inherit"}
-          size="small"
-        >
-          {diffEnabled ? <DiffIcon fontSize="small" /> : <DiffOutlinedIcon fontSize="small" />}
-        </IconButton>
-        <IconButton
-          className={classes.iconButton}
-          title={canExpandAll ? "Expand all" : "Collapse all"}
-          onClick={onToggleExpandAll}
-          data-testid="expand-all"
-          size="small"
-        >
-          {canExpandAll ? <UnfoldMoreIcon fontSize="small" /> : <UnfoldLessIcon fontSize="small" />}
-        </IconButton>
-        <Stack fullWidth paddingLeft={0.25}>
-          <MessagePathInput
-            index={0}
-            path={topicPath}
-            onChange={onTopicPathChange}
-            inputStyle={{ height: 20 }}
-          />
-          {diffEnabled && (
-            <Stack direction="row" flex="auto">
-              <Select
-                variant="filled"
-                size="small"
-                title="Diff method"
-                value={diffMethod}
-                MenuProps={{ MenuListProps: { dense: true } }}
-                onChange={(event: SelectChangeEvent) =>
-                  saveConfig({
-                    diffMethod: event.target.value as RawMessagesPanelConfig["diffMethod"],
-                  })
-                }
-              >
-                <MenuItem value={PREV_MSG_METHOD}>{PREV_MSG_METHOD}</MenuItem>
-                <MenuItem value={CUSTOM_METHOD}>custom</MenuItem>
-              </Select>
-              {diffMethod === CUSTOM_METHOD && (
-                <MessagePathInput
-                  index={1}
-                  path={diffTopicPath}
-                  onChange={onDiffTopicPathChange}
-                  inputStyle={{ height: "100%" }}
-                  {...(topic ? { prioritizedDatatype: topic.datatype } : {})}
-                />
-              )}
-            </Stack>
-          )}
-        </Stack>
-      </PanelToolbar>
+      <Toolbar
+        canExpandAll={canExpandAll}
+        diffEnabled={diffEnabled}
+        diffMethod={diffMethod}
+        diffTopicPath={diffTopicPath}
+        onDiffTopicPathChange={onDiffTopicPathChange}
+        onToggleDiff={onToggleDiff}
+        onToggleExpandAll={onToggleExpandAll}
+        onTopicPathChange={onTopicPathChange}
+        saveConfig={saveConfig}
+        topicPath={topicPath}
+      />
       {renderSingleTopicOrDiffOutput()}
     </Stack>
   );
@@ -714,7 +656,7 @@ function RawMessages(props: Props) {
 
 const defaultConfig: RawMessagesPanelConfig = {
   diffEnabled: false,
-  diffMethod: CUSTOM_METHOD,
+  diffMethod: Constants.CUSTOM_METHOD,
   diffTopicPath: "",
   showFullMessageForDiff: false,
   topicPath: "",

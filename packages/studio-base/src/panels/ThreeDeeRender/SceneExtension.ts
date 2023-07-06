@@ -2,24 +2,23 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { debounce, set, unset } from "lodash";
+import { set, unset } from "lodash";
 import * as THREE from "three";
 import { DeepPartial } from "ts-essentials";
 
 import { MessageEvent, SettingsTreeAction } from "@foxglove/studio";
 
+import type { AnyRendererSubscription, IRenderer } from "./IRenderer";
 import { Path } from "./LayerErrors";
 import { BaseUserData, Renderable } from "./Renderable";
-import type { Renderer } from "./Renderer";
 import type { SettingsTreeEntry } from "./SettingsManager";
 import { missingTransformMessage, MISSING_TRANSFORM } from "./renderables/transforms";
+import { AnyFrameId } from "./transforms";
 import { updatePose } from "./updatePose";
 
 export type PartialMessage<T> = DeepPartial<T>;
 
 export type PartialMessageEvent<T> = MessageEvent<DeepPartial<T>>;
-
-const SETTINGS_DEBOUNCE_MS = 100;
 
 /**
  * SceneExtension is a base class for extending the 3D scene. It extends THREE.Object3D and is a
@@ -36,8 +35,7 @@ const SETTINGS_DEBOUNCE_MS = 100;
  * - Override `startFrame()` to execute code at the start of each frame. Call `super.startFrame()`
  *   to run `updatePose()` on each entry in `this.renderables`.
  * - Override `settingsNodes()` to add entries to the settings sidebar.
- * - Message subscriptions are added with `renderer.addDatatypeSubscriptions()` or
- *   `renderer.addTopicSubscription()`.
+ * - Message subscriptions are created with `getSubscriptions()`.
  * - Custom layer actions are added with `renderer.addCustomLayerAction()`.
  */
 export class SceneExtension<
@@ -47,7 +45,7 @@ export class SceneExtension<
   /** A unique identifier for this SceneExtension, such as `foxglove.Markers`. */
   public readonly extensionId: string;
   /** A reference to the parent `Renderer` instance. */
-  protected readonly renderer: Renderer;
+  protected readonly renderer: IRenderer;
   /**
    * A map of string identifiers to Renderable instances. SceneExtensions are free to use any IDs
    * they choose, although topic names are a common choice for extensions display up to one
@@ -55,24 +53,18 @@ export class SceneExtension<
    */
   public readonly renderables = new Map<string, TRenderable>();
 
-  private _settingsUpdateDebounced = debounce(
-    () => {
-      this.renderer.settings.setNodesForKey(this.extensionId, this.settingsNodes());
-      this.renderer.syncSettingsTree();
-    },
-    SETTINGS_DEBOUNCE_MS,
-    { leading: true, trailing: true, maxWait: SETTINGS_DEBOUNCE_MS },
-  );
-
   /**
    * @param extensionId A unique identifier for this SceneExtension, such as `foxglove.Markers`.
    * @param renderer A reference to the parent `Renderer` instance.
    */
-  public constructor(extensionId: string, renderer: Renderer) {
+  public constructor(extensionId: string, renderer: IRenderer) {
     super();
     this.extensionId = this.name = extensionId;
     this.renderer = renderer;
-    this.updateSettingsTree();
+    // updateSettingsTree() will call settingsNodes() which may be overridden in a child class.
+    // The child class may not assign its members until after this constructor returns. This breaks
+    // type assumptions, so we need to defer the call to updateSettingsTree()
+    queueMicrotask(() => this.updateSettingsTree());
   }
 
   /**
@@ -85,6 +77,15 @@ export class SceneExtension<
     }
     this.children.length = 0;
     this.renderables.clear();
+  }
+
+  /**
+   * Will add subscriptions from this scene extension to the renderer
+   * This will be called by the renderer when building topic and schema subscriptions on
+   * initialization and when imageOnlyMode becomes enabled
+   */
+  public getSubscriptions(): readonly AnyRendererSubscription[] {
+    return [];
   }
 
   /**
@@ -123,7 +124,7 @@ export class SceneExtension<
    * `settingsNodes()` method will be called to retrieve the latest nodes.
    */
   public updateSettingsTree(): void {
-    this._settingsUpdateDebounced();
+    this.renderer.settings.setNodesForKey(this.extensionId, this.settingsNodes());
   }
 
   /**
@@ -166,7 +167,11 @@ export class SceneExtension<
    *   does not move relative to any parent frame. The fixed frame is the root frame of the render
    *   frame.
    */
-  public startFrame(currentTime: bigint, renderFrameId: string, fixedFrameId: string): void {
+  public startFrame(
+    currentTime: bigint,
+    renderFrameId: AnyFrameId,
+    fixedFrameId: AnyFrameId,
+  ): void {
     for (const renderable of this.renderables.values()) {
       const path = renderable.userData.settingsPath;
 

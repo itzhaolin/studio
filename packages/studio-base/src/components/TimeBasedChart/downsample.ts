@@ -2,13 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { ChartData, ScatterDataPoint } from "chart.js";
-
-// Chartjs typings use _null_ to indicate _gaps_ in the dataset
-// eslint-disable-next-line no-restricted-syntax
-type ChartNull = null;
-type Data = ChartData<"scatter", (ScatterDataPoint | ChartNull)[]>;
-type DataSet = Data["datasets"][0];
+import type { ChartDataset, ChartDatum } from "./types";
 
 type DownsampleBounds = {
   width: number;
@@ -39,7 +33,10 @@ type DownsampleBounds = {
  * dataset, and the interval connects to the next interval with the same slope line as the original
  * data. The min/max entries preserve spikes within the data.
  */
-export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds): DataSet {
+export function downsampleTimeseries(
+  dataset: ChartDataset,
+  bounds: DownsampleBounds,
+): ChartDataset {
   // datasets of length 1 don't need downsampling
   if (dataset.data.length <= 1) {
     return dataset;
@@ -48,9 +45,9 @@ export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds)
   const pixelPerXValue = bounds.width / (bounds.x.max - bounds.x.min);
   const pixelPerYValue = bounds.height / (bounds.y.max - bounds.y.min);
 
-  const downsampled: ScatterDataPoint[] = [];
+  const downsampled: ChartDatum[] = [];
 
-  type IntervalItem = { xPixel: number; yPixel: number; datum: ScatterDataPoint };
+  type IntervalItem = { xPixel: number; yPixel: number; datum: ChartDatum };
 
   let intFirst: IntervalItem | undefined;
   let intLast: IntervalItem | undefined;
@@ -64,7 +61,7 @@ export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds)
   const minX = bounds.x.min - xRange * 0.5;
   const maxX = bounds.x.max + xRange * 0.5;
 
-  let firstPastBounds: typeof dataset.data[0] | undefined = undefined;
+  let firstPastBounds: (typeof dataset.data)[0] | undefined = undefined;
 
   for (const datum of dataset.data) {
     if (!datum) {
@@ -88,8 +85,10 @@ export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds)
       continue;
     }
 
-    const x = Math.round(datum.x * pixelPerXValue);
-    const y = Math.round(datum.y * pixelPerYValue);
+    // Benchmarking shows, at least as of the time of this writing, that Math.trunc is
+    // *much* faster than Math.round on this data.
+    const x = Math.trunc(datum.x * pixelPerXValue);
+    const y = Math.trunc(datum.y * pixelPerYValue);
 
     // interval has ended, we determine whether to write additional points for min/max/last
     if (intFirst?.xPixel !== x) {
@@ -111,13 +110,17 @@ export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds)
       // always add the first datum of an new interval
       downsampled.push(datum);
 
-      intFirst = intLast = { xPixel: x, yPixel: y, datum };
+      intFirst = { xPixel: x, yPixel: y, datum };
+      intLast = { xPixel: x, yPixel: y, datum };
       intMin = { xPixel: x, yPixel: y, datum };
       intMax = { xPixel: x, yPixel: y, datum };
       continue;
     }
 
-    intLast = { xPixel: x, yPixel: y, datum };
+    intLast ??= { xPixel: x, yPixel: y, datum };
+    intLast.xPixel = x;
+    intLast.yPixel = y;
+    intLast.datum = datum;
 
     if (intMin && y < intMin.yPixel) {
       intMin.yPixel = y;
@@ -152,7 +155,7 @@ export function downsampleTimeseries(dataset: DataSet, bounds: DownsampleBounds)
   return { ...dataset, data: downsampled };
 }
 
-export function downsampleScatter(dataset: DataSet, bounds: DownsampleBounds): DataSet {
+export function downsampleScatter(dataset: ChartDataset, bounds: DownsampleBounds): ChartDataset {
   // datasets of length 1 don't need downsampling
   if (dataset.data.length <= 1) {
     return dataset;
@@ -162,7 +165,7 @@ export function downsampleScatter(dataset: DataSet, bounds: DownsampleBounds): D
   const pixelPerYValue = bounds.height / (bounds.y.max - bounds.y.min);
   const pixelPerRow = bounds.width;
 
-  const downsampled: ScatterDataPoint[] = [];
+  const downsampled: ChartDatum[] = [];
 
   // downsampling tracks a sparse array of x/y locations
   const sparse: boolean[] = [];

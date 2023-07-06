@@ -2,7 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Topic } from "@foxglove/studio";
+import { Topic } from "@foxglove/studio-base/players/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 
 type Args = { topics: Topic[]; datatypes: RosDatatypes };
@@ -18,13 +18,13 @@ type LibGeneratorFn = (args: Args) => Promise<string>;
  * generated value from `fn` is returned.
  */
 class MemoizedLibGenerator {
-  private datatypes?: RosDatatypes;
-  private topics?: Topic[];
-  private fn: LibGeneratorFn;
-  private cached?: string;
+  #datatypes?: RosDatatypes;
+  #topics?: Topic[];
+  #fn: LibGeneratorFn;
+  #cached?: string;
 
   public constructor(fn: LibGeneratorFn) {
-    this.fn = fn;
+    this.#fn = fn;
   }
 
   /**
@@ -35,17 +35,17 @@ class MemoizedLibGenerator {
    */
   public async update(args: Args): Promise<{ didUpdate: boolean; lib: string }> {
     if (
-      args.topics === this.topics &&
-      args.datatypes === this.datatypes &&
-      this.cached != undefined
+      args.topics === this.#topics &&
+      args.datatypes === this.#datatypes &&
+      this.#cached != undefined
     ) {
-      return { didUpdate: false, lib: this.cached };
+      return { didUpdate: false, lib: this.#cached };
     }
 
-    const lib = await this.fn(args);
-    this.topics = args.topics;
-    this.datatypes = args.datatypes;
-    this.cached = lib;
+    const lib = await this.#fn(args);
+    this.#topics = args.topics;
+    this.#datatypes = args.datatypes;
+    this.#cached = lib;
     return { didUpdate: true, lib };
   }
 }

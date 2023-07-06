@@ -12,22 +12,23 @@ import { Player } from "@foxglove/studio-base/players/types";
 class VelodyneDataSourceFactory implements IDataSourceFactory {
   public id = "velodyne-device";
   public type: IDataSourceFactory["type"] = "connection";
-  public displayName = "Velodyne LIDAR";
+  public displayName = "Velodyne Lidar";
   public iconName: IDataSourceFactory["iconName"] = "GenericScan";
   public description =
-    "Connect directly to Velodyne LIDAR hardware to inspect incoming sensor data.";
-  public docsLink = "https://foxglove.dev/docs/studio/connection/velodyne";
+    "Connect directly to Velodyne Lidar hardware to inspect incoming sensor data.";
+  public docsLinks = [{ url: "https://foxglove.dev/docs/studio/connection/velodyne" }];
 
   public formConfig = {
-    fields: [{ id: "url", label: "UDP Port", defaultValue: "2369" }],
+    fields: [{ id: "port", label: "UDP Port", defaultValue: "2369" }],
   };
 
   public initialize(args: DataSourceFactoryInitializeArgs): Player | undefined {
-    // velodyne uses the url arg as the port
-    const port = args.url as number | undefined;
-    if (port == undefined) {
+    const portStr = args.params?.port;
+    if (portStr == undefined) {
       return;
     }
+
+    const port = parseInt(portStr);
 
     return new VelodynePlayer({ port, metricsCollector: args.metricsCollector });
   }

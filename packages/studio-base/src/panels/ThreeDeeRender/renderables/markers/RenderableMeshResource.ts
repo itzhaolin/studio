@@ -4,38 +4,42 @@
 
 import * as THREE from "three";
 
-import type { Renderer } from "../../Renderer";
-import { rgbToThreeColor } from "../../color";
-import { Marker } from "../../ros";
-import { removeLights, replaceMaterials } from "../models";
+import { EDGE_LINE_SEGMENTS_NAME } from "@foxglove/studio-base/panels/ThreeDeeRender/ModelCache";
+
 import { RenderableMarker } from "./RenderableMarker";
 import { makeStandardMaterial } from "./materials";
-
-export type GltfMesh = THREE.Mesh<
-  THREE.BufferGeometry,
-  THREE.MeshStandardMaterial | THREE.MeshStandardMaterial[]
->;
+import type { IRenderer } from "../../IRenderer";
+import { rgbToThreeColor } from "../../color";
+import { disposeMeshesRecursive } from "../../dispose";
+import { Marker } from "../../ros";
+import { removeLights, replaceMaterials } from "../models";
 
 const MESH_FETCH_FAILED = "MESH_FETCH_FAILED";
 
 export class RenderableMeshResource extends RenderableMarker {
-  private mesh: THREE.Group | THREE.Scene | undefined;
-  private material: THREE.MeshStandardMaterial;
+  #mesh: THREE.Group | THREE.Scene | undefined;
+  #material: THREE.MeshStandardMaterial;
+
+  /** Track updates to avoid race conditions when asynchronously loading models */
+  #updateId = 0;
 
   public constructor(
     topic: string,
     marker: Marker,
     receiveTime: bigint | undefined,
-    renderer: Renderer,
+    renderer: IRenderer,
   ) {
     super(topic, marker, receiveTime, renderer);
 
-    this.material = makeStandardMaterial(marker.color);
+    this.#material = makeStandardMaterial(marker.color);
     this.update(marker, receiveTime, true);
   }
 
   public override dispose(): void {
-    this.material.dispose();
+    if (this.#mesh) {
+      disposeMeshesRecursive(this.#mesh);
+    }
+    this.#material.dispose();
   }
 
   public override update(
@@ -49,36 +53,75 @@ export class RenderableMeshResource extends RenderableMarker {
     const marker = this.userData.marker;
 
     const transparent = marker.color.a < 1;
-    if (transparent !== this.material.transparent) {
-      this.material.transparent = transparent;
-      this.material.depthWrite = !transparent;
-      this.material.needsUpdate = true;
+    if (transparent !== this.#material.transparent) {
+      this.#material.transparent = transparent;
+      this.#material.depthWrite = !transparent;
+      this.#material.needsUpdate = true;
     }
 
-    rgbToThreeColor(this.material.color, marker.color);
-    this.material.opacity = marker.color.a;
+    rgbToThreeColor(this.#material.color, marker.color);
+    this.#material.opacity = marker.color.a;
 
     if (forceLoad === true || marker.mesh_resource !== prevMarker.mesh_resource) {
+      const curUpdateId = ++this.#updateId;
+
       const opts = { useEmbeddedMaterials: marker.mesh_use_embedded_materials };
       const errors = this.renderer.settings.errors;
-      this._loadModel(marker.mesh_resource, opts).catch((err) => {
-        errors.add(
-          this.userData.settingsPath,
-          MESH_FETCH_FAILED,
-          `Unhandled error loading mesh from "${marker.mesh_resource}": ${err.message}`,
-        );
-      });
+      if (this.#mesh) {
+        this.remove(this.#mesh);
+        disposeMeshesRecursive(this.#mesh);
+        this.#mesh = undefined;
+      }
+      this.#loadModel(marker.mesh_resource, opts)
+        .then((mesh) => {
+          if (!mesh) {
+            return;
+          }
+          if (this.#updateId !== curUpdateId) {
+            // another update has started
+            disposeMeshesRecursive(mesh);
+            return;
+          }
+          this.#mesh = mesh;
+          this.add(mesh);
+          this.#updateOutlineVisibility();
+
+          // Remove any mesh fetch error message since loading was successful
+          this.renderer.settings.errors.remove(this.userData.settingsPath, MESH_FETCH_FAILED);
+          // Render a new frame now that the model is loaded
+          this.renderer.queueAnimationFrame();
+        })
+        .catch((err) => {
+          errors.add(
+            this.userData.settingsPath,
+            MESH_FETCH_FAILED,
+            `Unhandled error loading mesh from "${marker.mesh_resource}": ${err.message}`,
+          );
+        });
     }
+    this.#updateOutlineVisibility();
 
     this.scale.set(marker.scale.x, marker.scale.y, marker.scale.z);
   }
 
-  private async _loadModel(url: string, opts: { useEmbeddedMaterials: boolean }): Promise<void> {
-    if (this.mesh) {
-      this.remove(this.mesh);
-      this.mesh = undefined;
-    }
+  #updateOutlineVisibility(): void {
+    const showOutlines = this.getSettings()?.showOutlines ?? true;
+    this.traverse((lineSegments) => {
+      // Want to avoid picking up the LineSegments from the model itself
+      // only update line segments that we've added with the special name
+      if (
+        lineSegments instanceof THREE.LineSegments &&
+        lineSegments.name === EDGE_LINE_SEGMENTS_NAME
+      ) {
+        lineSegments.visible = showOutlines;
+      }
+    });
+  }
 
+  async #loadModel(
+    url: string,
+    opts: { useEmbeddedMaterials: boolean },
+  ): Promise<THREE.Group | THREE.Scene | undefined> {
     const cachedModel = await this.renderer.modelCache.load(url, {}, (err) => {
       this.renderer.settings.errors.add(
         this.userData.settingsPath,
@@ -95,21 +138,15 @@ export class RenderableMeshResource extends RenderableMarker {
           `Failed to load mesh from "${url}"`,
         );
       }
-      return;
+      return undefined;
     }
 
     const mesh = cachedModel.clone(true);
     removeLights(mesh);
     if (!opts.useEmbeddedMaterials) {
-      replaceMaterials(mesh, this.material);
+      replaceMaterials(mesh, this.#material);
     }
 
-    this.mesh = mesh;
-    this.add(mesh);
-
-    // Remove any mesh fetch error message since loading was successful
-    this.renderer.settings.errors.remove(this.userData.settingsPath, MESH_FETCH_FAILED);
-    // Render a new frame now that the model is loaded
-    this.renderer.queueAnimationFrame();
+    return mesh;
   }
 }

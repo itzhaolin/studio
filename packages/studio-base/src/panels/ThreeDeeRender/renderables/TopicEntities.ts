@@ -5,10 +5,6 @@
 import { toNanoSec } from "@foxglove/rostime";
 import { SceneEntity, SceneEntityDeletion, SceneEntityDeletionType } from "@foxglove/schemas";
 
-import { BaseUserData, Renderable } from "../Renderable";
-import { Renderer } from "../Renderer";
-import { updatePose } from "../updatePose";
-import { LayerSettingsEntity } from "./SceneEntities";
 import { PrimitivePool } from "./primitives/PrimitivePool";
 import { RenderableArrows } from "./primitives/RenderableArrows";
 import { RenderableCubes } from "./primitives/RenderableCubes";
@@ -20,6 +16,10 @@ import { RenderableTexts } from "./primitives/RenderableTexts";
 import { RenderableTriangles } from "./primitives/RenderableTriangles";
 import { ALL_PRIMITIVE_TYPES, PrimitiveType } from "./primitives/types";
 import { missingTransformMessage, MISSING_TRANSFORM } from "./transforms";
+import type { IRenderer } from "../IRenderer";
+import { BaseUserData, Renderable } from "../Renderable";
+import { LayerSettingsEntity } from "../settings";
+import { updatePose } from "../updatePose";
 
 const INVALID_DELETION_TYPE = "INVALID_DELETION_TYPE";
 
@@ -52,30 +52,25 @@ const PRIMITIVE_KEYS = {
 
 export class TopicEntities extends Renderable<EntityTopicUserData> {
   public override pickable = false;
-  private renderablesById = new Map<string, EntityRenderables>();
+  #renderablesById = new Map<string, EntityRenderables>();
 
   public constructor(
     name: string,
     private primitivePool: PrimitivePool,
-    renderer: Renderer,
+    renderer: IRenderer,
     userData: EntityTopicUserData,
   ) {
     super(name, renderer, userData);
   }
 
-  // eslint-disable-next-line no-restricted-syntax
-  public get topic(): string {
-    return this.userData.topic;
-  }
-
   public override dispose(): void {
     this.children.length = 0;
-    this._deleteAllEntities();
+    this.#deleteAllEntities();
   }
 
   public updateSettings(): void {
     // Updates each individual primitive renderable using the current topic settings
-    for (const renderables of this.renderablesById.values()) {
+    for (const renderables of this.#renderablesById.values()) {
       for (const renderable of Object.values(renderables)) {
         renderable.updateSettings(this.userData.settings);
       }
@@ -83,7 +78,7 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
   }
 
   public setColorScheme(colorScheme: "dark" | "light"): void {
-    for (const renderables of this.renderablesById.values()) {
+    for (const renderables of this.#renderablesById.values()) {
       for (const renderable of Object.values(renderables)) {
         renderable.setColorScheme(colorScheme);
       }
@@ -97,7 +92,7 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
       return;
     }
 
-    for (const renderables of this.renderablesById.values()) {
+    for (const renderables of this.#renderablesById.values()) {
       for (const renderable of Object.values(renderables)) {
         const entity = renderable.userData.entity;
         if (!entity) {
@@ -107,7 +102,7 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
         // Check if this entity has expired
         const expiresAt = renderable.userData.expiresAt;
         if (expiresAt != undefined && currentTime > expiresAt) {
-          this._deleteEntity(entity.id);
+          this.#deleteEntity(entity.id);
           break;
         }
 
@@ -135,10 +130,10 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
   }
 
   public addOrUpdateEntity(entity: SceneEntity, receiveTime: bigint): void {
-    let renderables = this.renderablesById.get(entity.id);
+    let renderables = this.#renderablesById.get(entity.id);
     if (!renderables) {
       renderables = {};
-      this.renderablesById.set(entity.id, renderables);
+      this.#renderablesById.set(entity.id, renderables);
     }
 
     for (const primitiveType of ALL_PRIMITIVE_TYPES) {
@@ -148,12 +143,13 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
         if (!renderable) {
           renderable = this.primitivePool.acquire(primitiveType);
           renderable.name = `${entity.id}:${primitiveType} on ${this.topic}`;
+          renderable.userData.settingsPath = this.userData.settingsPath;
           renderable.setColorScheme(this.renderer.colorScheme);
           // @ts-expect-error TS doesn't know that renderable matches primitiveType
           renderables[primitiveType] = renderable;
           this.add(renderable);
         }
-        renderable.update(entity, this.userData.settings, receiveTime);
+        renderable.update(this.userData.topic, entity, this.userData.settings, receiveTime);
       } else if (renderable) {
         this.remove(renderable);
         delete renderables[primitiveType];
@@ -165,10 +161,10 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
   public deleteEntities(deletion: SceneEntityDeletion): void {
     switch (deletion.type) {
       case SceneEntityDeletionType.MATCHING_ID:
-        this._deleteEntity(deletion.id);
+        this.#deleteEntity(deletion.id);
         break;
       case SceneEntityDeletionType.ALL:
-        this._deleteAllEntities();
+        this.#deleteAllEntities();
         break;
       default:
         // Unknown action
@@ -180,7 +176,7 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
     }
   }
 
-  private _removeRenderables(renderables: EntityRenderables): void {
+  #removeRenderables(renderables: EntityRenderables): void {
     for (const [primitiveType, primitive] of Object.entries(renderables) as [
       PrimitiveType,
       EntityRenderables[PrimitiveType],
@@ -192,18 +188,18 @@ export class TopicEntities extends Renderable<EntityTopicUserData> {
     }
   }
 
-  private _deleteEntity(id: string) {
-    const renderables = this.renderablesById.get(id);
+  #deleteEntity(id: string) {
+    const renderables = this.#renderablesById.get(id);
     if (renderables) {
-      this._removeRenderables(renderables);
+      this.#removeRenderables(renderables);
     }
-    this.renderablesById.delete(id);
+    this.#renderablesById.delete(id);
   }
 
-  private _deleteAllEntities() {
-    for (const renderables of this.renderablesById.values()) {
-      this._removeRenderables(renderables);
+  #deleteAllEntities() {
+    for (const renderables of this.#renderablesById.values()) {
+      this.#removeRenderables(renderables);
     }
-    this.renderablesById.clear();
+    this.#renderablesById.clear();
   }
 }

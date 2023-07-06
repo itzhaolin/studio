@@ -4,15 +4,18 @@
 
 import * as base64 from "@protobufjs/base64";
 
-import { RosMsgField } from "@foxglove/rosmsg";
+import { MessageDefinitionField } from "@foxglove/message-definition";
 
-import { RosDatatypes } from "./types";
+import { MessageDefinitionMap } from "./types";
 
+/**
+ * Parse a JSON Schema and produce datatypes and a deserializer function.
+ */
 export function parseJsonSchema(
   rootJsonSchema: Record<string, unknown>,
   rootTypeName: string,
 ): {
-  datatypes: RosDatatypes;
+  datatypes: MessageDefinitionMap;
 
   /**
    * A function that should be called after parsing a value from a JSON string to do any necessary
@@ -20,7 +23,7 @@ export function parseJsonSchema(
    */
   postprocessValue: (value: Record<string, unknown>) => unknown;
 } {
-  const datatypes: RosDatatypes = new Map();
+  const datatypes: MessageDefinitionMap = new Map();
 
   function addFieldsRecursive(
     schema: Record<string, unknown>,
@@ -28,7 +31,7 @@ export function parseJsonSchema(
     keyPath: string[],
   ): (value: Record<string, unknown>) => unknown {
     let postprocessObject: (value: Record<string, unknown>) => unknown = (value) => value;
-    const fields: RosMsgField[] = [];
+    const fields: MessageDefinitionField[] = [];
     if (schema.type !== "object") {
       throw new Error(
         `Expected "type": "object" for schema ${typeName}, got ${JSON.stringify(schema.type)}`,

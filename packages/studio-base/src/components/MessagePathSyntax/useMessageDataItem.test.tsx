@@ -20,7 +20,7 @@ import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 
 import { useMessageDataItem } from "./useMessageDataItem";
 
-const topics = [{ name: "/topic", datatype: "datatype" }];
+const topics: Topic[] = [{ name: "/topic", schemaName: "datatype" }];
 const datatypes: RosDatatypes = new Map(
   Object.entries({
     datatype: {
@@ -28,23 +28,26 @@ const datatypes: RosDatatypes = new Map(
     },
   }),
 );
-const fixtureMessages: MessageEvent<unknown>[] = [
+const fixtureMessages: MessageEvent[] = [
   {
     topic: "/topic",
     receiveTime: { sec: 0, nsec: 0 },
     message: { value: 0 },
+    schemaName: "datatype",
     sizeInBytes: 0,
   },
   {
     topic: "/topic",
     receiveTime: { sec: 1, nsec: 0 },
     message: { value: 1 },
+    schemaName: "datatype",
     sizeInBytes: 0,
   },
   {
     topic: "/topic",
     receiveTime: { sec: 2, nsec: 0 },
     message: { value: 2 },
+    schemaName: "datatype",
     sizeInBytes: 0,
   },
 ];

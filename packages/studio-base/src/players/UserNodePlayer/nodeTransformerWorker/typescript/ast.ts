@@ -13,7 +13,7 @@
 
 import ts from "typescript/lib/typescript";
 
-import { RosMsgField } from "@foxglove/rosmsg";
+import { MessageDefinitionField } from "@foxglove/message-definition";
 import {
   noFuncError,
   nonFuncError,
@@ -300,7 +300,7 @@ export const constructDatatypes = (
     isComplex: boolean = false,
     typeMap: TypeMap = {},
     innerDepth: number = 1,
-  ): RosMsgField => {
+  ): MessageDefinitionField => {
     if (innerDepth > MAX_DEPTH) {
       throw new Error(`Max AST traversal depth exceeded.`);
     }
@@ -523,7 +523,15 @@ export const constructDatatypes = (
       default: {
         const locationType = checker.getTypeAtLocation(tsNode);
 
-        const symbol = locationType.symbol;
+        const symbol = locationType.symbol as ts.Symbol | undefined;
+        if (symbol == undefined) {
+          throw new DatatypeExtractionError({
+            severity: DiagnosticSeverity.Error,
+            message: `Unsupported type for member '${name}'.`,
+            source: Sources.DatatypeExtraction,
+            code: ErrorCodes.DatatypeExtraction.BAD_TYPE_RETURN,
+          });
+        }
         const declaration = symbol.declarations?.[0];
         if (symbol.declarations?.length !== 1 || !declaration) {
           throw new DatatypeExtractionError(badTypeReturnError);

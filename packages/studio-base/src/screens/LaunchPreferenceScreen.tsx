@@ -14,10 +14,10 @@ import {
 import { ReactElement, useState } from "react";
 import { makeStyles } from "tss-react/mui";
 
+import { useSessionStorageValue } from "@foxglove/hooks";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import Stack from "@foxglove/studio-base/components/Stack";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
-import { useSessionStorageValue } from "@foxglove/studio-base/hooks/useSessionStorageValue";
 import { LaunchPreferenceValue } from "@foxglove/studio-base/types/LaunchPreferenceValue";
 
 const useStyles = makeStyles()((theme) => ({
@@ -98,10 +98,10 @@ export function LaunchPreferenceScreen(): ReactElement {
                 onClick={action.onClick}
               >
                 <Stack flex="auto" zeroMinWidth>
-                  <Typography component="div" variant="subtitle1" color="text.primary">
+                  <Typography variant="subtitle1" color="text.primary">
                     {action.primary}
                   </Typography>
-                  <Typography component="div" variant="body2" color="text.secondary">
+                  <Typography variant="body2" color="text.secondary">
                     {action.secondary}
                   </Typography>
                 </Stack>

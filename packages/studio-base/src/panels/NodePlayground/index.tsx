@@ -22,10 +22,10 @@ import {
   Input,
   Link,
   Typography,
-  useTheme,
-  styled as muiStyled,
+  inputClasses,
 } from "@mui/material";
 import { Suspense, useCallback, useEffect, useState } from "react";
+import { makeStyles } from "tss-react/mui";
 import { v4 as uuidv4 } from "uuid";
 
 import { SettingsTreeAction, SettingsTreeNodes } from "@foxglove/studio";
@@ -39,15 +39,12 @@ import {
   useCurrentLayoutSelector,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { useUserNodeState } from "@foxglove/studio-base/context/UserNodeStateContext";
-import { useWorkspace } from "@foxglove/studio-base/context/WorkspaceContext";
 import BottomBar from "@foxglove/studio-base/panels/NodePlayground/BottomBar";
 import Sidebar from "@foxglove/studio-base/panels/NodePlayground/Sidebar";
-import { HelpInfoStore, useHelpInfo } from "@foxglove/studio-base/providers/HelpInfoProvider";
-import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelSettingsEditorContextProvider";
+import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import { SaveConfig, UserNodes } from "@foxglove/studio-base/types/panels";
 
 import Config from "./Config";
-import helpContent from "./index.help.md";
 import { Script } from "./script";
 
 const Editor = React.lazy(
@@ -92,25 +89,24 @@ type Props = {
   saveConfig: SaveConfig<Config>;
 };
 
-const UnsavedDot = muiStyled("div", {
-  shouldForwardProp: (prop) => prop !== "isSaved",
-})<{
-  isSaved: boolean;
-}>(({ isSaved, theme }) => ({
-  display: isSaved ? "none" : "initial",
-  width: 6,
-  height: 6,
-  borderRadius: "50%",
-  top: "50%",
-  position: "absolute",
-  right: theme.spacing(1),
-  transform: "translateY(-50%)",
-  backgroundColor: theme.palette.text.secondary,
-}));
-
-const StyledInput = muiStyled(Input)(({ theme }) => ({
-  ".MuiInput-input": {
-    padding: theme.spacing(1),
+const useStyles = makeStyles()((theme) => ({
+  emptyState: {
+    backgroundColor: theme.palette.background.default,
+  },
+  unsavedDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    top: "50%",
+    position: "absolute",
+    right: theme.spacing(1),
+    transform: "translateY(-50%)",
+    backgroundColor: theme.palette.text.secondary,
+  },
+  input: {
+    [`.${inputClasses.input}`]: {
+      padding: theme.spacing(1),
+    },
   },
 }));
 
@@ -119,7 +115,6 @@ export type Explorer = undefined | "nodes" | "utils" | "templates";
 function buildSettingsTree(config: Config): SettingsTreeNodes {
   return {
     general: {
-      icon: "Settings",
       fields: {
         autoFormatOnSave: {
           input: "boolean",
@@ -131,13 +126,10 @@ function buildSettingsTree(config: Config): SettingsTreeNodes {
   };
 }
 
-const selectSetHelpInfo = (store: HelpInfoStore) => store.setHelpInfo;
-
 const WelcomeScreen = ({ addNewNode }: { addNewNode: (code?: string) => void }) => {
-  const setHelpInfo = useHelpInfo(selectSetHelpInfo);
-  const { openHelp } = useWorkspace();
+  const { classes } = useStyles();
   return (
-    <EmptyState>
+    <EmptyState className={classes.emptyState}>
       <Container maxWidth="xs">
         <Stack justifyContent="center" alignItems="center" gap={1} fullHeight>
           <Typography variant="inherit" gutterBottom>
@@ -147,11 +139,8 @@ const WelcomeScreen = ({ addNewNode }: { addNewNode: (code?: string) => void }) 
             <Link
               color="primary"
               underline="hover"
-              onClick={(e) => {
-                e.preventDefault();
-                setHelpInfo({ title: "NodePlayground", content: helpContent });
-                openHelp();
-              }}
+              href="https://foxglove.dev/docs/studio/panels/user-scripts"
+              target="_blank"
             >
               docs
             </Link>
@@ -178,10 +167,10 @@ const userNodeSelector = (state: LayoutState) =>
 
 function NodePlayground(props: Props) {
   const { config, saveConfig } = props;
+  const { classes, theme } = useStyles();
   const { autoFormatOnSave = false, selectedNodeId, editorForStorybook } = config;
   const updatePanelSettingsTree = usePanelSettingsTreeUpdate();
 
-  const theme = useTheme();
   const [explorer, updateExplorer] = React.useState<Explorer>(undefined);
 
   const userNodes = useCurrentLayoutSelector(userNodeSelector);
@@ -333,7 +322,7 @@ function NodePlayground(props: Props) {
 
   return (
     <Stack fullHeight>
-      <PanelToolbar helpContent={helpContent} />
+      <PanelToolbar />
       <Divider />
       <Stack direction="row" fullHeight overflow="hidden">
         <Sidebar
@@ -369,7 +358,8 @@ function NodePlayground(props: Props) {
             )}
             {selectedNodeId != undefined && selectedNode && (
               <div style={{ position: "relative" }}>
-                <StyledInput
+                <Input
+                  className={classes.input}
                   size="small"
                   disableUnderline
                   placeholder="script name"
@@ -385,7 +375,7 @@ function NodePlayground(props: Props) {
                   }}
                   inputProps={{ spellCheck: false, style: inputStyle }}
                 />
-                <UnsavedDot isSaved={isNodeSaved} />
+                {!isNodeSaved && <div className={classes.unsavedDot} />}
               </div>
             )}
             <IconButton

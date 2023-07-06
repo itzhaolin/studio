@@ -1,13 +1,12 @@
 {
   "name": "desktop",
   "private": true,
-  "dependencies": {
-    "@foxglove/electron-socket": "2.0.0",
-    "@foxglove/studio-base": "workspace:*"
-  },
   "devDependencies": {
-    "@types/plist": "^3.0.2",
-    "plist": "3.0.5",
-    "quicklookjs": "0.0.3"
+    "@foxglove/log": "workspace:*",
+    "@foxglove/studio-base": "workspace:*",
+    "@foxglove/studio-desktop": "workspace:*",
+    "electron": "25.2.0",
+    "playwright": "1.35.1",
+    "webpack": "5.88.1"
   }
 }

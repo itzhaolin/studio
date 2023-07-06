@@ -2,10 +2,17 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import type {} from "@mui/x-data-grid/themeAugmentation";
-
-import { alpha, Theme, ThemeOptions } from "@mui/material";
+import {
+  alpha,
+  CSSInterpolation,
+  Fade,
+  Theme,
+  dividerClasses,
+  listClasses,
+  listItemClasses,
+} from "@mui/material";
 import { CSSProperties } from "react";
+import tinycolor from "tinycolor2";
 
 type MuiLabComponents = {
   MuiFocusVisible?: {
@@ -16,7 +23,7 @@ type MuiLabComponents = {
   MuiToggleButton?: {
     styleOverrides?: {
       root?: CSSProperties;
-      label?: CSSProperties;
+      label?: CSSInterpolation;
     };
   };
   MuiToggleButtonGroup?: {
@@ -43,7 +50,7 @@ const disableBackgroundColorTransition = {
   transition: "none",
 };
 
-export default function muiComponents(theme: Theme): ThemeOptions["components"] & MuiLabComponents {
+export default function muiComponents(theme: Theme): Theme["components"] & MuiLabComponents {
   const prefersDarkMode = theme.palette.mode === "dark";
 
   return {
@@ -75,6 +82,7 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
             padding: theme.spacing(1, 1.25),
           },
           ".MuiInputBase-root.MuiInputBase-sizeSmall": {
+            paddingTop: 0,
             paddingBottom: 0,
 
             ".MuiAutocomplete-input.MuiInputBase-inputSizeSmall": {
@@ -87,6 +95,19 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
         },
         endAdornment: {
           top: `calc(50% - ${theme.spacing(1.5)})`,
+        },
+      },
+    },
+    MuiFab: {
+      defaultProps: {
+        color: "inherit",
+      },
+      styleOverrides: {
+        root: {
+          boxShadow: theme.shadows[2],
+        },
+        colorInherit: {
+          backgroundColor: theme.palette.background.paper,
         },
       },
     },
@@ -165,6 +186,11 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
       defaultProps: {
         disableRipple: true,
       },
+      styleOverrides: {
+        root: {
+          ...iconHack,
+        },
+      },
     },
     MuiFormLabel: {
       styleOverrides: {
@@ -223,6 +249,12 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
           ".MuiBackdrop-root": {
             backgroundColor: alpha(theme.palette.common.black, 0.4),
           },
+        },
+        paper: {
+          // Prevent dialog from going underneath window title bar controls on Windows
+          maxHeight: `calc(100% - 2 * (env(titlebar-area-height, ${theme.spacing(
+            2,
+          )}) + ${theme.spacing(2)}))`,
         },
       },
     },
@@ -346,25 +378,6 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
         },
       },
     },
-    MuiListItem: {
-      // variants: [
-      //   {
-      //     props: { showSecondaryActionsOnHover: true },
-      //     style: {
-      //       "@media (pointer: fine)": {
-      //         "& .MuiListItemSecondaryAction-root .MuiIconButton-root:last-child": {
-      //           visibility: "hidden",
-      //         },
-      //         "&:hover": {
-      //           "& .MuiListItemSecondaryAction-root .MuiIconButton-root:last-child": {
-      //             visibility: "visible",
-      //           },
-      //         },
-      //       },
-      //     },
-      //   },
-      // ],
-    },
     MuiListItemButton: {
       defaultProps: { disableRipple: true },
       styleOverrides: {
@@ -373,10 +386,33 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
         },
       },
     },
+    MuiListItemText: {
+      styleOverrides: {
+        dense: {
+          marginTop: theme.spacing(0.25),
+          marginBottom: theme.spacing(0.25),
+        },
+      },
+    },
     MuiMenu: {
+      defaultProps: {
+        TransitionComponent: Fade,
+      },
       styleOverrides: {
         paper: {
           borderRadius: theme.shape.borderRadius,
+          backgroundColor: theme.palette.background.menu,
+        },
+        list: {
+          ...theme.typography.body1,
+
+          [`&.${listClasses.dense}`]: {
+            ...theme.typography.body2,
+          },
+          [`.${listItemClasses.root} + .${dividerClasses.root}`]: {
+            marginTop: theme.spacing(1),
+            marginBottom: theme.spacing(1),
+          },
         },
       },
     },
@@ -430,6 +466,11 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
         elevation: {
           backgroundImage: "none !important",
         },
+      },
+    },
+    MuiPopover: {
+      defaultProps: {
+        marginThreshold: 8,
       },
     },
     MuiRadio: {
@@ -505,15 +546,37 @@ export default function muiComponents(theme: Theme): ThemeOptions["components"] 
     MuiTooltip: {
       defaultProps: {
         arrow: true,
+        TransitionComponent: Fade,
       },
       styleOverrides: {
         arrow: {
-          color: theme.palette.grey[700],
+          color: tinycolor(theme.palette.grey[700]).setAlpha(0.92).toRgbString(),
+          backdropFilter: "blur(3px)",
         },
         tooltip: {
-          backgroundColor: theme.palette.grey[700],
+          backgroundColor: tinycolor(theme.palette.grey[700]).setAlpha(0.92).toRgbString(),
+          backdropFilter: "blur(3px)",
           fontWeight: "normal",
-          fontSize: "0.75rem",
+          fontSize: theme.typography.caption.fontSize,
+        },
+      },
+    },
+    MuiTypography: {
+      defaultProps: {
+        // Remap typography variants to be <div> elements to
+        // avoid triggering react's validateDOMNesting error
+        variantMapping: {
+          h1: "div",
+          h2: "div",
+          h3: "div",
+          h4: "div",
+          h5: "div",
+          h6: "div",
+          subtitle1: "div",
+          subtitle2: "div",
+          body1: "div",
+          body2: "div",
+          inherit: "div",
         },
       },
     },

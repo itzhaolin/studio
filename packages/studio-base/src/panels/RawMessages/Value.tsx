@@ -4,13 +4,14 @@
 
 import CheckIcon from "@mui/icons-material/Check";
 import CopyAllIcon from "@mui/icons-material/CopyAll";
+import ErrorIcon from "@mui/icons-material/Error";
 import FilterIcon from "@mui/icons-material/FilterAlt";
 import StateTransitionsIcon from "@mui/icons-material/PowerInput";
 import ScatterPlotIcon from "@mui/icons-material/ScatterPlot";
 import LineChartIcon from "@mui/icons-material/ShowChart";
 import { IconButtonProps, Tooltip, TooltipProps } from "@mui/material";
-import { useCallback, useMemo, useState } from "react";
-import { withStyles } from "tss-react/mui";
+import { useCallback, useMemo, useState, useRef, useEffect } from "react";
+import { withStyles, makeStyles } from "tss-react/mui";
 
 import HoverableIconButton from "@foxglove/studio-base/components/HoverableIconButton";
 import Stack from "@foxglove/studio-base/components/Stack";
@@ -30,13 +31,21 @@ const StyledIconButton = withStyles(HoverableIconButton, (theme) => ({
   root: {
     "&.MuiIconButton-root": {
       fontSize: theme.typography.pxToRem(16),
+      opacity: 0.6,
       padding: 0,
-
-      "&:hover": { backgroundColor: "transparent" },
-      "&:not(:hover)": { opacity: 0.6 },
     },
   },
 }));
+
+const useStyles = makeStyles()({
+  // always hidden, just used to keep space and prevent resizing on hover
+  placeholderActionContainer: {
+    alignItems: "inherit",
+    display: "inherit",
+    gap: "inherit",
+    visibility: "hidden",
+  },
+});
 
 type ValueProps = {
   arrLabel: string;
@@ -57,7 +66,16 @@ type ValueActionItem = {
   color?: IconButtonProps["color"];
 };
 
-export default function Value(props: ValueProps): JSX.Element {
+const emptyAction: ValueActionItem = {
+  key: "",
+  tooltip: "",
+  icon: <ErrorIcon fontSize="inherit" />,
+};
+
+const MAX_ACTION_ITEMS = 4;
+
+function Value(props: ValueProps): JSX.Element {
+  const timeOutID = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const {
     arrLabel,
     basePath,
@@ -91,14 +109,13 @@ export default function Value(props: ValueProps): JSX.Element {
       .copy(value)
       .then(() => {
         setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+        timeOutID.current = setTimeout(() => setCopied(false), 1500);
       })
       .catch((e) => console.warn(e));
   }, []);
 
   const availableActions = useMemo(() => {
     const actions: ValueActionItem[] = [];
-
     if (arrLabel.length > 0) {
       actions.push({
         key: "Copy",
@@ -146,9 +163,10 @@ export default function Value(props: ValueProps): JSX.Element {
         });
       }
     }
+
     return actions;
   }, [
-    arrLabel,
+    arrLabel.length,
     copied,
     handleCopy,
     itemValue,
@@ -158,21 +176,65 @@ export default function Value(props: ValueProps): JSX.Element {
     valueAction,
   ]);
 
+  // need to keep space to prevent resizing and wrapping on hover
+  const placeholderActionsForSpacing = useMemo(() => {
+    const actions: ValueActionItem[] = [];
+    for (let i = availableActions.length; i < MAX_ACTION_ITEMS; i++) {
+      actions.push({ ...emptyAction, key: `empty-${i}` });
+    }
+    return actions;
+  }, [availableActions.length]);
+  const { classes, cx } = useStyles();
+
+  useEffect(() => {
+    return () => {
+      if (timeOutID.current != undefined) {
+        clearTimeout(timeOutID.current);
+      }
+    };
+  }, []);
+
+  // The Tooltip and StyledIconButton components seem to be expensive to render so we
+  // track our hover state and render them conditionally only when this component is
+  // hovered.
+  const [pointerOver, setPointerOver] = useState(false);
+
   return (
-    <Stack inline flexWrap="wrap" direction="row" alignItems="center" gap={0.25}>
+    <Stack
+      inline
+      flexWrap="wrap"
+      direction="row"
+      alignItems="center"
+      gap={0.25}
+      onPointerEnter={() => setPointerOver(true)}
+      onPointerLeave={() => setPointerOver(false)}
+    >
       <HighlightedValue itemLabel={itemLabel} />
       {arrLabel}
-      {availableActions.map((action) => (
-        <Tooltip key={action.key} arrow title={action.tooltip} placement="top">
-          <StyledIconButton
-            size="small"
-            activeColor={action.activeColor}
-            onClick={action.onClick}
-            color="inherit"
-            icon={action.icon}
-          />
-        </Tooltip>
-      ))}
+      {pointerOver &&
+        availableActions.map((action) => (
+          <Tooltip key={action.key} arrow title={action.tooltip} placement="top">
+            <StyledIconButton
+              size="small"
+              activeColor={action.activeColor}
+              onClick={action.onClick}
+              color="inherit"
+              icon={action.icon}
+            />
+          </Tooltip>
+        ))}
+      <span className={cx(classes.placeholderActionContainer)}>
+        {pointerOver &&
+          placeholderActionsForSpacing.map((action) => (
+            <Tooltip key={action.key} arrow title={action.tooltip} placement="top">
+              <StyledIconButton size="small" color="inherit" icon={action.icon} />
+            </Tooltip>
+          ))}
+      </span>
     </Stack>
   );
 }
+
+// In practice this seems to be an expensive component to render.
+// Memoization provides a very noticeable performance boost.
+export default React.memo(Value);

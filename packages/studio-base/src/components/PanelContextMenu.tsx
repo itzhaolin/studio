@@ -2,19 +2,11 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Divider, ListItemText, Menu, MenuItem } from "@mui/material";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import {
-  MosaicContext,
-  MosaicNode,
-  MosaicWindowActions,
-  MosaicWindowContext,
-} from "react-mosaic-component";
-import { DeepReadonly } from "ts-essentials";
+import { Divider, Menu, MenuItem } from "@mui/material";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { usePanelContext } from "@foxglove/studio-base/components/PanelContext";
+import { Immutable } from "@foxglove/studio";
 import { PANEL_ROOT_CLASS_NAME } from "@foxglove/studio-base/components/PanelRoot";
-import { useCurrentLayoutActions } from "@foxglove/studio-base/context/CurrentLayoutContext";
 
 /**
  * Types of items that can be included in a context menu. Either a clickable item
@@ -40,14 +32,8 @@ export type PanelContextMenuItem =
     };
 
 type PanelContextMenuProps = {
-  /**
-   * Function that returns a list of menu items, optionally dependent on the x,y
-   * position of the click.
-   */
-  itemsForClickPosition: (position: {
-    x: number;
-    y: number;
-  }) => DeepReadonly<PanelContextMenuItem[]>;
+  /** @returns List of menu items */
+  getItems: () => Immutable<PanelContextMenuItem[]>;
 };
 
 /**
@@ -55,7 +41,7 @@ type PanelContextMenuProps = {
  * must be a child of a Panel component to work.
  */
 export function PanelContextMenu(props: PanelContextMenuProps): JSX.Element {
-  const { itemsForClickPosition } = props;
+  const { getItems } = props;
 
   const rootRef = useRef<HTMLDivElement>(ReactNull);
 
@@ -63,60 +49,47 @@ export function PanelContextMenu(props: PanelContextMenuProps): JSX.Element {
 
   const handleClose = useCallback(() => setPosition(undefined), []);
 
-  const { tabId } = usePanelContext();
-
-  const [items, setItems] = useState<undefined | DeepReadonly<PanelContextMenuItem[]>>();
-
-  const listener = useCallback(
-    (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setPosition({ x: event.clientX, y: event.clientY });
-      setItems(itemsForClickPosition({ x: event.clientX, y: event.clientY }));
-    },
-    [itemsForClickPosition],
-  );
-
-  const { closePanel } = useCurrentLayoutActions();
-
-  const { mosaicActions } = useContext(MosaicContext);
-
-  const { mosaicWindowActions }: { mosaicWindowActions: MosaicWindowActions } =
-    useContext(MosaicWindowContext);
-
-  const removePanel = useCallback(() => {
-    closePanel({
-      path: mosaicWindowActions.getPath(),
-      root: mosaicActions.getRoot() as MosaicNode<string>,
-      tabId,
-    });
-  }, [closePanel, mosaicActions, mosaicWindowActions, tabId]);
+  const [items, setItems] = useState<Immutable<PanelContextMenuItem[]>>([]);
 
   useEffect(() => {
-    const element = rootRef.current;
-    if (!element) {
+    const parent = rootRef.current?.closest<HTMLElement>(`.${PANEL_ROOT_CLASS_NAME}`);
+    if (!parent) {
       return;
     }
 
-    const parent: HTMLElement | ReactNull = element.closest(`.${PANEL_ROOT_CLASS_NAME}`);
-    parent?.addEventListener("contextmenu", listener);
-
-    return () => {
-      parent?.removeEventListener("contextmenu", listener);
+    // Trigger the menu when the right mouse button is released, but not if the mouse moved in
+    // between press & release
+    let rightClickState: "none" | "down" | "canceled" = "none";
+    const handleMouseUp = (event: MouseEvent) => {
+      if (event.button === 2 && rightClickState === "down") {
+        setPosition({ x: event.clientX, y: event.clientY });
+        setItems(getItems());
+        rightClickState = "none";
+      }
     };
-  }, [listener]);
+    const handleMouseMove = (_event: MouseEvent) => {
+      rightClickState = "canceled";
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button === 2) {
+        rightClickState = "down";
+      }
+    };
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
 
-  const completeItems: DeepReadonly<PanelContextMenuItem[]> = useMemo(() => {
-    return [
-      ...(items ?? []),
-      { type: "divider" },
-      {
-        type: "item",
-        label: "Remove panel",
-        onclick: removePanel,
-      },
-    ];
-  }, [items, removePanel]);
+    parent.addEventListener("mousedown", handleMouseDown);
+    parent.addEventListener("mousemove", handleMouseMove);
+    parent.addEventListener("mouseup", handleMouseUp);
+    parent.addEventListener("contextmenu", handleContextMenu);
+    return () => {
+      parent.removeEventListener("mousedown", handleMouseDown);
+      parent.removeEventListener("mousemove", handleMouseMove);
+      parent.removeEventListener("mouseup", handleMouseUp);
+      parent.removeEventListener("contextmenu", handleContextMenu);
+    };
+  }, [getItems]);
 
   return (
     <div ref={rootRef} onContextMenu={(event) => event.preventDefault()}>
@@ -129,7 +102,7 @@ export function PanelContextMenu(props: PanelContextMenuProps): JSX.Element {
           dense: true,
         }}
       >
-        {completeItems.map((item, index) => {
+        {items.map((item, index) => {
           if (item.type === "divider") {
             return <Divider variant="middle" key={`divider_${index}`} />;
           }
@@ -143,7 +116,7 @@ export function PanelContextMenu(props: PanelContextMenuProps): JSX.Element {
               key={`item_${index}_${item.label}`}
               disabled={item.disabled}
             >
-              <ListItemText>{item.label}</ListItemText>
+              {item.label}
             </MenuItem>
           );
         })}

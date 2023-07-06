@@ -70,9 +70,9 @@ export const ErrorCodes = {
 };
 
 export type Diagnostic = {
-  severity: typeof DiagnosticSeverity[keyof typeof DiagnosticSeverity];
+  severity: (typeof DiagnosticSeverity)[keyof typeof DiagnosticSeverity];
   message: string;
-  source: typeof Sources[keyof typeof Sources];
+  source: (typeof Sources)[keyof typeof Sources];
   startLineNumber?: number;
   startColumn?: number;
   endLineNumber?: number;
@@ -104,13 +104,13 @@ export type NodeRegistration = {
   inputs: readonly string[];
   output: Topic;
   processBlockMessage: (
-    messageEvent: MessageEvent<unknown>,
+    messageEvent: MessageEvent,
     globalVariables: GlobalVariables,
-  ) => Promise<MessageEvent<unknown> | undefined>;
+  ) => Promise<MessageEvent | undefined>;
   processMessage: (
-    messageEvent: MessageEvent<unknown>,
+    messageEvent: MessageEvent,
     globalVariables: GlobalVariables,
-  ) => Promise<MessageEvent<unknown> | undefined>;
+  ) => Promise<MessageEvent | undefined>;
   terminate: () => void;
 };
 

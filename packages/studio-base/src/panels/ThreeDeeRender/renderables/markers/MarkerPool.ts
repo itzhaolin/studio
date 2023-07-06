@@ -2,21 +2,21 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import type { Renderer } from "../../Renderer";
-import { MarkerType, Marker } from "../../ros";
 import { RenderableArrow } from "./RenderableArrow";
 import { RenderableCube } from "./RenderableCube";
 import { RenderableCubeList } from "./RenderableCubeList";
 import { RenderableCylinder } from "./RenderableCylinder";
 import { RenderableLineList } from "./RenderableLineList";
 import { RenderableLineStrip } from "./RenderableLineStrip";
-import { RenderableMarker } from "./RenderableMarker";
+import { RenderableMarker, getMarkerId } from "./RenderableMarker";
 import { RenderableMeshResource } from "./RenderableMeshResource";
 import { RenderablePoints } from "./RenderablePoints";
 import { RenderableSphere } from "./RenderableSphere";
 import { RenderableSphereList } from "./RenderableSphereList";
 import { RenderableTextViewFacing } from "./RenderableTextViewFacing";
 import { RenderableTriangleList } from "./RenderableTriangleList";
+import type { Renderer } from "../../Renderer";
+import { MarkerType, Marker } from "../../ros";
 
 const CONSTRUCTORS = {
   [MarkerType.ARROW]: RenderableArrow,
@@ -37,7 +37,7 @@ const CONSTRUCTORS = {
  * An object pool for RenderableMarker subclass objects.
  */
 export class MarkerPool {
-  private renderablesByType = new Map<MarkerType, RenderableMarker[]>();
+  #renderablesByType = new Map<MarkerType, RenderableMarker[]>();
 
   public constructor(private renderer: Renderer) {}
 
@@ -47,13 +47,14 @@ export class MarkerPool {
     marker: Marker,
     receiveTime: bigint | undefined,
   ): RenderableMarker {
-    const renderables = this.renderablesByType.get(type);
+    const renderables = this.#renderablesByType.get(type);
     if (renderables) {
       const renderable = renderables.pop();
       if (renderable) {
         renderable.userData.settingsPath = ["topics", topic];
         renderable.userData.settings = { visible: true, frameLocked: marker.frame_locked };
         renderable.userData.topic = topic;
+        renderable.name = getMarkerId(topic, marker.ns, marker.id);
         renderable.update(marker, receiveTime);
         return renderable;
       }
@@ -64,20 +65,20 @@ export class MarkerPool {
 
   public release(renderable: RenderableMarker): void {
     const type = renderable.userData.marker.type as MarkerType;
-    const renderables = this.renderablesByType.get(type);
+    const renderables = this.#renderablesByType.get(type);
     if (!renderables) {
-      this.renderablesByType.set(type, [renderable]);
+      this.#renderablesByType.set(type, [renderable]);
     } else {
       renderables.push(renderable);
     }
   }
 
   public dispose(): void {
-    for (const renderables of this.renderablesByType.values()) {
+    for (const renderables of this.#renderablesByType.values()) {
       for (const renderable of renderables) {
         renderable.dispose();
       }
     }
-    this.renderablesByType.clear();
+    this.#renderablesByType.clear();
   }
 }

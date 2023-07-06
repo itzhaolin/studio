@@ -5,50 +5,42 @@
 import * as THREE from "three";
 
 import { toNanoSec } from "@foxglove/rostime";
-import { SceneEntity, TriangleListPrimitive } from "@foxglove/schemas";
-import {
-  DynamicBufferGeometry,
-  DynamicFloatBufferGeometry,
-} from "@foxglove/studio-base/panels/ThreeDeeRender/DynamicBufferGeometry";
-import { emptyPose } from "@foxglove/studio-base/util/Pose";
+import { Point3, SceneEntity, TriangleListPrimitive } from "@foxglove/schemas";
+import { DynamicBufferGeometry } from "@foxglove/studio-base/panels/ThreeDeeRender/DynamicBufferGeometry";
 
-import type { Renderer } from "../../Renderer";
-import { makeRgba, rgbToThreeColor, SRGBToLinear, stringToRgba } from "../../color";
-import { LayerSettingsEntity } from "../SceneEntities";
 import { RenderablePrimitive } from "./RenderablePrimitive";
+import type { IRenderer } from "../../IRenderer";
+import { makeRgba, rgbToThreeColor, SRGBToLinear, stringToRgba } from "../../color";
+import { LayerSettingsEntity } from "../../settings";
 
 const tempRgba = makeRgba();
 const tempColor = new THREE.Color();
+const missingColor = { r: 0, g: 1.0, b: 0, a: 1.0 };
 
-type TriangleMesh = THREE.Mesh<DynamicFloatBufferGeometry, THREE.MeshStandardMaterial>;
+const COLOR_LENGTH_ERROR_ID = "INVALID_COLOR_LENGTH";
+const INVALID_POINT_ERROR_ID = "INVALID_POINT";
+
+type TriangleMesh = THREE.Mesh<DynamicBufferGeometry, THREE.MeshStandardMaterial>;
 export class RenderableTriangles extends RenderablePrimitive {
-  private _triangleMeshes: TriangleMesh[] = [];
-  public constructor(renderer: Renderer) {
-    super("", renderer, {
-      receiveTime: -1n,
-      messageTime: -1n,
-      frameId: "",
-      pose: emptyPose(),
-      settings: { visible: true, color: undefined },
-      settingsPath: [],
-      entity: undefined,
-    });
+  #triangleMeshes: TriangleMesh[] = [];
+  public constructor(renderer: IRenderer) {
+    super("", renderer);
   }
 
-  private _ensureCapacity(triCount: number) {
-    while (triCount > this._triangleMeshes.length) {
-      this._triangleMeshes.push(makeTriangleMesh());
+  #ensureCapacity(triCount: number) {
+    while (triCount > this.#triangleMeshes.length) {
+      this.#triangleMeshes.push(makeTriangleMesh());
     }
   }
-  private _updateTriangleMeshes(tris: TriangleListPrimitive[]) {
-    this._ensureCapacity(tris.length);
+  #updateTriangleMeshes(tris: TriangleListPrimitive[]) {
+    this.#ensureCapacity(tris.length);
     // removes all children so that meshes that are still in the _triangleMesh array
     // but don't have a new corresponding primitive  won't be rendered
     this.clear();
 
     let triMeshIdx = 0;
     for (const primitive of tris) {
-      const mesh = this._triangleMeshes[triMeshIdx];
+      const mesh = this.#triangleMeshes[triMeshIdx];
       if (!mesh) {
         continue;
       }
@@ -63,7 +55,10 @@ export class RenderableTriangles extends RenderablePrimitive {
       geometry.resize(primitive.points.length);
 
       if (!geometry.attributes.position) {
-        geometry.createAttribute("position", 3);
+        geometry.createAttribute("position", Float32Array, 3);
+      }
+      if (!geometry.attributes.normal) {
+        geometry.createAttribute("normal", Float32Array, 3);
       }
       const vertices = geometry.attributes.position!;
 
@@ -74,12 +69,19 @@ export class RenderableTriangles extends RenderablePrimitive {
         : undefined;
 
       if (!singleColor && !geometry.attributes.color) {
-        geometry.createAttribute("color", 4);
+        geometry.createAttribute("color", Uint8Array, 4, true);
       }
       const colors = geometry.attributes.color;
 
       for (let i = 0; i < primitive.points.length; i++) {
         const point = primitive.points[i]!;
+        if (!isPointValid(point)) {
+          this.addError(
+            `${this.name}-${INVALID_POINT_ERROR_ID}`,
+            `Entity: ${this.userData.entity?.id}.triangles[${triMeshIdx}](1st index) - Point definition at index ${i} is not finite`,
+          );
+          continue;
+        }
         vertChanged =
           vertChanged ||
           vertices.getX(i) !== point.x ||
@@ -88,11 +90,19 @@ export class RenderableTriangles extends RenderablePrimitive {
         vertices.setXYZ(i, point.x, point.y, point.z);
 
         if (!singleColor && colors && primitive.colors.length > 0) {
-          const color = primitive.colors[i]!;
+          const color = primitive.colors[i] ?? missingColor;
+          // only trigger on last point index
+          if (i === primitive.points.length - 1 && color === missingColor) {
+            // will only show 1st triMeshIdx of issue -- addError prevents the adding of errors with duplicate errorIds
+            this.addError(
+              `${this.name}-${COLOR_LENGTH_ERROR_ID}`,
+              `Entity: ${this.userData.entity?.id}.triangles[${triMeshIdx}](1st index) - Colors array should be same size as points array, showing #00ff00 instead`,
+            );
+          }
           const r = SRGBToLinear(color.r);
           const g = SRGBToLinear(color.g);
           const b = SRGBToLinear(color.b);
-          const a = SRGBToLinear(color.a);
+          const a = color.a;
           colorChanged =
             colorChanged ||
             colors.getX(i) !== r ||
@@ -118,7 +128,7 @@ export class RenderableTriangles extends RenderablePrimitive {
       if (colorChanged) {
         material.vertexColors = true;
         // need to set overall material color back or else it will blend them with the vertex colors
-        material.color.set("#ffffff");
+        material.color.setRGB(1, 1, 1);
         material.opacity = 1.0;
         // can assume that color exists since colorchanged is true
         geometry.attributes.color!.needsUpdate = true;
@@ -188,37 +198,37 @@ export class RenderableTriangles extends RenderablePrimitive {
   }
 
   public override dispose(): void {
-    for (const mesh of this._triangleMeshes) {
+    for (const mesh of this.#triangleMeshes) {
       mesh.geometry.dispose();
       mesh.material.dispose();
     }
     this.clear();
-    this._triangleMeshes.length = 0;
+    this.#triangleMeshes.length = 0;
+    this.clearErrors();
   }
 
   public override update(
+    topic: string | undefined,
     entity: SceneEntity | undefined,
     settings: LayerSettingsEntity,
     receiveTime: bigint,
   ): void {
-    this.userData.entity = entity;
-    this.userData.settings = settings;
-    this.userData.receiveTime = receiveTime;
+    super.update(topic, entity, settings, receiveTime);
     if (entity) {
       const lifetimeNs = toNanoSec(entity.lifetime);
       this.userData.expiresAt = lifetimeNs === 0n ? undefined : receiveTime + lifetimeNs;
-      this._updateTriangleMeshes(entity.triangles);
+      this.#updateTriangleMeshes(entity.triangles);
     }
   }
 
   public updateSettings(settings: LayerSettingsEntity): void {
-    this.update(this.userData.entity, settings, this.userData.receiveTime);
+    this.update(this.userData.topic, this.userData.entity, settings, this.userData.receiveTime);
   }
 }
 
 function makeTriangleMesh(): TriangleMesh {
   return new THREE.Mesh(
-    new DynamicBufferGeometry(Float32Array),
+    new DynamicBufferGeometry(),
     new THREE.MeshStandardMaterial({
       metalness: 0,
       roughness: 1,
@@ -226,4 +236,8 @@ function makeTriangleMesh(): TriangleMesh {
       side: THREE.DoubleSide,
     }),
   );
+}
+
+function isPointValid(pt: Point3): boolean {
+  return Number.isFinite(pt.x) && Number.isFinite(pt.y) && Number.isFinite(pt.z);
 }

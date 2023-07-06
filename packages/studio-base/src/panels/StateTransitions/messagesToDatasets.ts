@@ -5,20 +5,18 @@
 import stringHash from "string-hash";
 
 import { Time, toSec, subtract as subtractTimes } from "@foxglove/rostime";
-import { ChartData } from "@foxglove/studio-base/components/Chart";
 import { MessageAndData } from "@foxglove/studio-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
-import { TimeBasedChartTooltipData } from "@foxglove/studio-base/components/TimeBasedChart";
+import {
+  ChartDataset,
+  ChartDatasets,
+  ChartDatum,
+} from "@foxglove/studio-base/components/TimeBasedChart/types";
 import { darkColor, expandedLineColors } from "@foxglove/studio-base/util/plotColors";
 import { getTimestampForMessageEvent } from "@foxglove/studio-base/util/time";
 import { grey } from "@foxglove/studio-base/util/toolsColorScheme";
 
 import positiveModulo from "./positiveModulo";
 import { StateTransitionPath } from "./types";
-
-type DatasetInfo = {
-  datasets: ChartData["datasets"];
-  tooltips: TimeBasedChartTooltipData[];
-};
 
 const baseColors = [grey, ...expandedLineColors];
 
@@ -30,22 +28,21 @@ type Args = {
   blocks: readonly (readonly MessageAndData[] | undefined)[];
 };
 
-export default function messagesToDatasets(args: Args): DatasetInfo {
-  const { path, startTime, y, pathIndex, blocks } = args;
+export default function messagesToDatasets(args: Args): ChartDatasets {
+  const { path, pathIndex, startTime, y, blocks } = args;
 
-  const info: DatasetInfo = {
-    datasets: [],
-    tooltips: [],
-  };
+  const datasets = [];
 
-  let prevQueryValue: string | number | bigint | boolean | undefined;
   let previousTimestamp: Time | undefined;
-  let currentData: ChartData["datasets"][0]["data"] = [];
+  let currentData: ChartDatum[] = [];
+
+  const datasetIndexMap = new Map<unknown, number>();
+  let lastDatasetIndex: undefined | number = undefined;
 
   for (const messages of blocks) {
     if (!messages) {
-      currentData = [];
-      prevQueryValue = undefined;
+      currentData.push({ x: NaN, y: NaN });
+      lastDatasetIndex = undefined;
       previousTimestamp = undefined;
       continue;
     }
@@ -63,11 +60,13 @@ export default function messagesToDatasets(args: Args): DatasetInfo {
 
       const { constantName, value } = queriedData;
 
+      const datasetIndex = datasetIndexMap.get(value);
+
       // Skip duplicates.
       if (
         previousTimestamp &&
         toSec(subtractTimes(previousTimestamp, timestamp)) === 0 &&
-        prevQueryValue === value
+        datasetIndex === lastDatasetIndex
       ) {
         continue;
       }
@@ -94,35 +93,29 @@ export default function messagesToDatasets(args: Args): DatasetInfo {
 
       const x = toSec(subtractTimes(timestamp, startTime));
 
-      const element = { x, y };
-
-      const tooltip: TimeBasedChartTooltipData = {
-        x,
-        y,
-        path: path.value,
-        value,
-        constantName,
-      };
-      info.tooltips.unshift(tooltip);
-
-      // the current point is added even if different from previous value to avoid _gaps_ in the data
-      // this is a byproduct of using separate datasets to render each color
-      currentData.push({ x, y });
-
-      // if the value is different from previous value, make a new dataset
-      if (value !== prevQueryValue) {
-        const label =
-          constantName != undefined ? `${constantName} (${String(value)})` : String(value);
-
+      // If the value maps to a different dataset than the last value, close the previous segment
+      // and insert a gap.
+      const newSegment = datasetIndex !== lastDatasetIndex;
+      if (newSegment) {
+        currentData.push({ x, y });
+        currentData.push({ x: NaN, y: NaN });
+      }
+      const label =
+        constantName != undefined ? `${constantName} (${String(value)})` : String(value);
+      if (datasetIndex == undefined) {
+        datasetIndexMap.set(value, datasets.length);
         const elementWithLabel = {
-          ...element,
+          x,
+          y,
           label,
           labelColor: color,
+          value,
+          constantName,
         };
 
         // new data starts with our current point, the current point
         currentData = [elementWithLabel];
-        const dataset: ChartData["datasets"][0] = {
+        const dataset: ChartDataset = {
           borderWidth: 10,
           borderColor: color,
           data: currentData,
@@ -138,12 +131,26 @@ export default function messagesToDatasets(args: Args): DatasetInfo {
           },
         };
 
-        info.datasets.push(dataset);
+        lastDatasetIndex = datasets.length;
+        datasets.push(dataset);
+      } else {
+        currentData = datasets[datasetIndex]?.data ?? [];
+        if (newSegment) {
+          currentData.push({
+            x,
+            y,
+            label,
+            labelColor: color,
+            value,
+            constantName,
+          });
+        } else {
+          currentData.push({ x, y, value, constantName });
+        }
+        lastDatasetIndex = datasetIndex;
       }
-
-      prevQueryValue = value;
     }
   }
 
-  return info;
+  return datasets;
 }

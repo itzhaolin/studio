@@ -14,10 +14,11 @@
 import { omit } from "lodash";
 import { useEffect, useRef, useState } from "react";
 import shallowequal from "shallowequal";
+import { Writable } from "ts-essentials";
 import { createStore } from "zustand";
 
 import { Time, isLessThan } from "@foxglove/rostime";
-import { ParameterValue } from "@foxglove/studio";
+import { Immutable, ParameterValue } from "@foxglove/studio";
 import {
   AdvertiseOptions,
   MessageEvent,
@@ -30,6 +31,8 @@ import {
   Topic,
   PlayerURLState,
   TopicStats,
+  PlayerCapabilities,
+  PlayerState,
 } from "@foxglove/studio-base/players/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 
@@ -40,12 +43,13 @@ const NO_DATATYPES = new Map();
 
 function noop() {}
 
-type MockMessagePipelineProps = {
+export type MockMessagePipelineProps = {
+  name?: string;
   presence?: PlayerPresence;
   topics?: Topic[];
   topicStats?: Map<string, TopicStats>;
   datatypes?: RosDatatypes;
-  messages?: MessageEvent<unknown>[];
+  messages?: MessageEvent[];
   problems?: PlayerProblem[];
   publish?: (request: PublishPayload) => void;
   callService?: (service: string, request: unknown) => Promise<unknown>;
@@ -98,6 +102,7 @@ function getPublicState(
 
   return {
     playerState: {
+      name: props.name,
       presence: props.presence ?? PlayerPresence.PRESENT,
       playerId: props.playerId ?? "1",
       progress: props.progress ?? {},
@@ -124,7 +129,6 @@ function getPublicState(
             },
     },
     subscriptions: [],
-    publishers: [],
     sortedTopics:
       props.topics === prevState?.mockProps.topics
         ? prevState?.public.sortedTopics ?? []
@@ -154,7 +158,8 @@ function getPublicState(
     startPlayback: props.startPlayback,
     playUntil: noop,
     pausePlayback: props.pausePlayback,
-    setPlaybackSpeed: noop,
+    setPlaybackSpeed:
+      props.capabilities?.includes(PlayerCapabilities.setSpeed) === true ? noop : undefined,
     seekPlayback: props.seekPlayback,
 
     pauseFrame: props.pauseFrame ?? (() => noop),
@@ -188,7 +193,7 @@ export default function MockMessagePipelineProvider(
             const publicState = getPublicState(state, action.mockProps, state.dispatch);
             const newState = reducer(state, {
               type: "update-player-state",
-              playerState: publicState.playerState,
+              playerState: publicState.playerState as Writable<PlayerState>,
             });
             return {
               ...newState,
@@ -212,7 +217,7 @@ export default function MockMessagePipelineProvider(
             const messages = newState.public.playerState.activeData?.messages;
             if (action.type === "update-subscriber" && messages && messages.length !== 0) {
               let changed = false;
-              const messageEventsBySubscriberId = new Map<string, MessageEvent<unknown>[]>();
+              const messageEventsBySubscriberId = new Map<string, Immutable<MessageEvent[]>>();
               for (const [id, subs] of newState.subscriptionsById) {
                 const existingMsgs = newState.public.messageEventsBySubscriberId.get(id);
                 const newMsgs = messages.filter(
@@ -228,7 +233,10 @@ export default function MockMessagePipelineProvider(
               }
 
               if (changed) {
-                newState.public.messageEventsBySubscriberId = messageEventsBySubscriberId;
+                newState.public = {
+                  ...newState.public,
+                  messageEventsBySubscriberId,
+                };
               }
               return { ...newState, dispatch: state.dispatch };
             }
@@ -242,11 +250,12 @@ export default function MockMessagePipelineProvider(
         player: undefined,
         dispatch,
         publishersById: {},
+        allPublishers: [],
         subscriptionsById: new Map(),
         subscriberIdsByTopic: new Map(),
         newTopicsBySubscriberId: new Map(),
         lastMessageEventByTopic: new Map(),
-        lastCapabilities: initialPublicState.playerState.capabilities,
+        lastCapabilities: [...initialPublicState.playerState.capabilities],
         public: {
           ...initialPublicState,
           messageEventsBySubscriberId: new Map(),

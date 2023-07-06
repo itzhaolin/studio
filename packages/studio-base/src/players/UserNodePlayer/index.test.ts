@@ -15,6 +15,7 @@
 import { signal } from "@foxglove/den/async";
 import FakePlayer from "@foxglove/studio-base/components/MessagePipeline/FakePlayer";
 import {
+  AdvertiseOptions,
   MessageEvent,
   PlayerState,
   PlayerStateActiveData,
@@ -36,9 +37,10 @@ const nodeId = "nodeId";
 const nodeUserCode = `
   export const inputs = ["/np_input"];
   export const output = "${DEFAULT_STUDIO_NODE_PREFIX}1";
+  const stamp = Math.random(); // stamp used to distinguish different instances of a script.
   let lastStamp, lastReceiveTime;
-  export default (message: { message: { payload: string } }): { custom_np_field: string, value: string } => {
-    return { custom_np_field: "abc", value: message.message.payload };
+  export default (message: { message: { payload: string } }): { custom_np_field: string, value: string, stamp: number } => {
+    return { custom_np_field: "abc", value: message.message.payload, stamp  };
   };
 `;
 
@@ -109,6 +111,7 @@ const upstreamFirst = {
   message: {
     payload: "bar",
   },
+  schemaName: "foo",
   sizeInBytes: 0,
 };
 
@@ -118,14 +121,16 @@ const upstreamSecond = {
   message: {
     payload: "baz",
   },
+  schemaName: "foo",
   sizeInBytes: 0,
 };
 
 const setListenerHelper = (player: UserNodePlayer, numPromises: number = 1) => {
+  // eslint-disable-next-line @typescript-eslint/promise-function-async
   const signals = [...new Array(numPromises)].map(() =>
     signal<{
       topicNames: string[];
-      messages: readonly MessageEvent<unknown>[];
+      messages: readonly MessageEvent[];
       progress?: PlayerState["progress"];
       topics: Topic[] | undefined;
       datatypes: RosDatatypes | undefined;
@@ -219,7 +224,7 @@ describe("UserNodePlayer", () => {
       });
       expect(fakePlayer.seekPlayback).not.toHaveBeenCalled();
       userNodePlayer.seekPlayback({ sec: 2, nsec: 2 });
-      expect(fakePlayer.seekPlayback).toHaveBeenCalledWith({ sec: 2, nsec: 2 }, undefined);
+      expect(fakePlayer.seekPlayback).toHaveBeenCalledWith({ sec: 2, nsec: 2 });
     });
 
     it("delegates publishing to underlying player", () => {
@@ -229,7 +234,7 @@ describe("UserNodePlayer", () => {
       const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
       expect(fakePlayer.setPublishers).not.toHaveBeenCalled();
       expect(fakePlayer.publish).not.toHaveBeenCalled();
-      const publishers = [{ topic: "/foo", datatype: "foo", datatypes: new Map() }];
+      const publishers: AdvertiseOptions[] = [{ topic: "/foo", schemaName: "foo" }];
       userNodePlayer.setPublishers(publishers);
       expect(fakePlayer.setPublishers).toHaveBeenLastCalledWith(publishers);
       expect(fakePlayer.publish).not.toHaveBeenCalled();
@@ -259,12 +264,12 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [],
           currentTime: { sec: 0, nsec: 0 },
-          topics: [{ name: "/np_input", datatype: `${DEFAULT_STUDIO_NODE_PREFIX}1` }],
+          topics: [{ name: "/np_input", schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
 
-      const { topicNames, messages }: any = await done;
+      const { topicNames, messages } = (await done)!;
 
       expect(mockSetNodeDiagnostics.mock.calls).toEqual([[nodeId, []]]);
       expect(messages.length).toEqual(0);
@@ -279,7 +284,7 @@ describe("UserNodePlayer", () => {
         setUserNodeDiagnostics: mockSetNodeDiagnostics,
       });
 
-      const [done1, done2] = setListenerHelper(userNodePlayer, 2);
+      const [done1, done2, done3] = setListenerHelper(userNodePlayer, 3);
 
       const activeData = {
         ...basicPlayerState,
@@ -290,22 +295,24 @@ describe("UserNodePlayer", () => {
       };
       await fakePlayer.emit({ activeData });
 
-      void userNodePlayer.setUserNodes({
+      await userNodePlayer.setUserNodes({
         nodeId: { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, sourceCode: nodeUserCode },
       });
+      await done1;
+
       await fakePlayer.emit({
         activeData: {
           ...activeData,
-          topics: [{ name: "/np_input", datatype: `${DEFAULT_STUDIO_NODE_PREFIX}1` }],
+          topics: [{ name: "/np_input", schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` }],
         },
       });
 
-      let { topicNames, messages } = await done1!;
+      let { topicNames, messages } = await done2!;
 
       expect(messages.length).toEqual(0);
-      expect(topicNames).toEqual([]);
+      expect(topicNames).toEqual([`${DEFAULT_STUDIO_NODE_PREFIX}1`]);
 
-      ({ topicNames, messages } = await done2!);
+      ({ topicNames, messages } = await done3!);
       expect(messages.length).toEqual(0);
       expect(topicNames).toEqual(["/np_input", `${DEFAULT_STUDIO_NODE_PREFIX}1`]);
 
@@ -333,25 +340,25 @@ describe("UserNodePlayer", () => {
         setUserNodeDiagnostics: mockSetNodeDiagnostics,
       });
 
-      void userNodePlayer.setUserNodes({
+      const [done1, done2, done3] = setListenerHelper(userNodePlayer, 3);
+
+      await userNodePlayer.setUserNodes({
         nodeId: { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, sourceCode: nodeUserCode },
       });
-
-      const [done1, done2, done3] = setListenerHelper(userNodePlayer, 3);
 
       const activeData: PlayerStateActiveData = {
         ...basicPlayerState,
         messages: [],
         currentTime: { sec: 0, nsec: 0 },
-        topics: [{ name: "/np_input", datatype: "/np_input_datatype" }],
+        topics: [{ name: "/np_input", schemaName: "/np_input_datatype" }],
         datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
       };
 
       await fakePlayer.emit({ activeData });
-      const { topics: firstTopics, datatypes: firstDatatypes }: any = await done1;
-      expect(firstTopics).toEqual([
-        { name: "/np_input", datatype: "/np_input_datatype" },
-        { name: "/studio_script/1", datatype: `${DEFAULT_STUDIO_NODE_PREFIX}1` },
+      const { topics: firstTopics, datatypes: firstDatatypes } = (await done1)!;
+      expect(firstTopics).toEqual<typeof firstTopics>([
+        { name: "/np_input", schemaName: "/np_input_datatype" },
+        { name: "/studio_script/1", schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` },
       ]);
       expect(firstDatatypes).toEqual(
         new Map([
@@ -360,8 +367,27 @@ describe("UserNodePlayer", () => {
             `${DEFAULT_STUDIO_NODE_PREFIX}1`,
             {
               definitions: [
-                { name: "custom_np_field", type: "string", isArray: false, isComplex: false },
-                { name: "value", type: "string", isArray: false, isComplex: false },
+                {
+                  name: "custom_np_field",
+                  type: "string",
+                  isArray: false,
+                  isComplex: false,
+                  arrayLength: undefined,
+                },
+                {
+                  name: "value",
+                  type: "string",
+                  isArray: false,
+                  isComplex: false,
+                  arrayLength: undefined,
+                },
+                {
+                  name: "stamp",
+                  type: "float64",
+                  isArray: false,
+                  isComplex: false,
+                  arrayLength: undefined,
+                },
               ],
             },
           ],
@@ -371,13 +397,13 @@ describe("UserNodePlayer", () => {
 
       // Seek should keep topics memoized.
       await fakePlayer.emit({ activeData: { ...activeData, lastSeekTime: 123 } });
-      const { topics: secondTopics, datatypes: secondDatatypes }: any = await done2;
+      const { topics: secondTopics, datatypes: secondDatatypes } = (await done2)!;
       expect(secondTopics).toBe(firstTopics);
       expect(secondDatatypes).toBe(firstDatatypes);
 
       // Changing topics/datatypes should not memoize.
       await fakePlayer.emit({ activeData: { ...activeData, topics: [], datatypes: new Map() } });
-      const { topics: thirdTopics, datatypes: thirdDatatypes }: any = await done3;
+      const { topics: thirdTopics, datatypes: thirdDatatypes } = (await done3)!;
       expect(thirdTopics).not.toBe(firstTopics);
       expect(thirdDatatypes).not.toBe(firstDatatypes);
     });
@@ -403,7 +429,7 @@ describe("UserNodePlayer", () => {
 
       const [done, nextDone] = setListenerHelper(userNodePlayer, 2);
 
-      const topics = [{ name: "/np_input", datatype: `${DEFAULT_STUDIO_NODE_PREFIX}1` }];
+      const topics: Topic[] = [{ name: "/np_input", schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` }];
       const datatypes = new Map(Object.entries({ foo: { definitions: [] } }));
 
       await fakePlayer.emit({
@@ -416,7 +442,7 @@ describe("UserNodePlayer", () => {
         },
       });
 
-      const { messages }: any = await done;
+      const { messages } = (await done)!;
 
       await fakePlayer.emit({
         activeData: {
@@ -434,6 +460,85 @@ describe("UserNodePlayer", () => {
       expect(messages).toBe(newMessages);
     });
 
+    it("outputs updated messages on next when user script is changed with no new messages as part of active state", async () => {
+      const fakePlayer = new FakePlayer();
+      const mockAddUserNodeLogs = jest.fn();
+      const userNodePlayer = new UserNodePlayer(fakePlayer, {
+        ...defaultUserNodeActions,
+        setUserNodeDiagnostics: jest.fn(),
+        addUserNodeLogs: mockAddUserNodeLogs,
+      });
+
+      userNodePlayer.setSubscriptions([{ topic: `${DEFAULT_STUDIO_NODE_PREFIX}1` }]);
+      const nodeUserCodeBefore = `
+        export const inputs = ["/np_input"];
+        export const output = "${DEFAULT_STUDIO_NODE_PREFIX}1";
+        let lastStamp, lastReceiveTime;
+        export default (message: { message: { payload: string } }): { custom_np_field: string, value: string } => {
+          return { custom_np_field: "abc", value: message.message.payload };
+        };
+      `;
+      await userNodePlayer.setUserNodes({
+        nodeId: {
+          name: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+          sourceCode: nodeUserCodeBefore,
+        },
+      });
+
+      const messagesArray = [upstreamFirst];
+
+      const [done, nextDone] = setListenerHelper(userNodePlayer, 2);
+
+      const topics: Topic[] = [{ name: "/np_input", schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` }];
+      const datatypes = new Map(Object.entries({ foo: { definitions: [] } }));
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: messagesArray,
+          currentTime: { sec: 0, nsec: 0 },
+          topics,
+          datatypes,
+        },
+      });
+
+      (await done)!;
+
+      const nodeUserCodeAfter = `
+        export const inputs = ["/np_input"];
+        export const output = "${DEFAULT_STUDIO_NODE_PREFIX}1";
+        let lastStamp, lastReceiveTime;
+        export default (message: { message: { payload: string } }): { custom_np_field: string, value: string } => {
+          return { custom_np_field: "COMPLETELY_DIFFERENT", value: message.message.payload };
+        };
+      `;
+      await userNodePlayer.setUserNodes({
+        nodeId: {
+          name: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+          sourceCode: nodeUserCodeAfter,
+        },
+      });
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [],
+          currentTime: { sec: 0, nsec: 0 },
+          topics,
+          datatypes,
+        },
+      });
+
+      const { messages: newMessages }: any = await nextDone;
+
+      expect(
+        newMessages.find(
+          (message: MessageEvent) =>
+            (message.message as { custom_np_field?: string }).custom_np_field ===
+            "COMPLETELY_DIFFERENT",
+        ),
+      ).toBeTruthy();
+    });
+
     it("subscribes to underlying topics when nodeInfo is added", async () => {
       const fakePlayer = new FakePlayer();
       const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
@@ -445,7 +550,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [],
           currentTime: { sec: 0, nsec: 0 },
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
@@ -499,12 +604,12 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
 
-      const { messages, topicNames }: any = await done;
+      const { messages, topicNames } = (await done)!;
       expect(topicNames).toEqual(["/np_input", `${DEFAULT_STUDIO_NODE_PREFIX}1`]);
       expect(messages).toEqual([upstreamFirst]);
     });
@@ -525,19 +630,20 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
 
-      const { messages }: any = await done;
+      const { messages } = (await done)!;
 
       expect(messages).toEqual([
         upstreamFirst,
         {
           topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
           receiveTime: upstreamFirst.receiveTime,
-          message: { custom_np_field: "abc", value: "bar" },
+          message: { custom_np_field: "abc", value: "bar", stamp: expect.any(Number) },
+          schemaName: "/studio_script/1",
           sizeInBytes: 0,
         },
       ]);
@@ -546,6 +652,7 @@ describe("UserNodePlayer", () => {
     it("produces blocks for full subscriptions", async () => {
       const fakePlayer = new FakePlayer();
       const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
+      const spy = jest.spyOn(UserNodePlayer, "CreateNodeRuntimeWorker");
 
       const [done] = setListenerHelper(userNodePlayer);
 
@@ -561,7 +668,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
         progress: {
@@ -575,7 +682,18 @@ describe("UserNodePlayer", () => {
         },
       });
 
-      const { progress }: any = await done;
+      const { messages, progress } = (await done)!;
+
+      expect(messages).toEqual([
+        upstreamFirst,
+        {
+          topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+          receiveTime: upstreamFirst.receiveTime,
+          message: { custom_np_field: "abc", value: "bar", stamp: expect.any(Number) },
+          schemaName: "/studio_script/1",
+          sizeInBytes: 0,
+        },
+      ]);
 
       expect(progress).toEqual({
         fullyLoadedFractionRanges: [{ start: 0, end: 1 }],
@@ -595,7 +713,131 @@ describe("UserNodePlayer", () => {
                     message: {
                       custom_np_field: "abc",
                       value: "bar",
+                      stamp: expect.any(Number),
                     },
+                    schemaName: "/studio_script/1",
+                    sizeInBytes: 0,
+                  },
+                ],
+              },
+              sizeInBytes: 1,
+            },
+          ],
+        },
+      });
+
+      // CreateNodeRuntimeWorker should have been called once for the message processing
+      // worker and once for the block processing worker,
+      expect(spy).toHaveBeenCalledTimes(2);
+
+      // The block and message workers should have different stamps.
+      const messageWorkerStamp = (messages[1] as MessageEvent<{ stamp: number }>).message.stamp;
+      const blockWorkerStamp = (
+        progress?.messageCache?.blocks[0]?.messagesByTopic[
+          `${DEFAULT_STUDIO_NODE_PREFIX}1`
+        ]?.[0] as MessageEvent<{ stamp: number }>
+      ).message.stamp;
+
+      expect(messageWorkerStamp).not.toEqual(blockWorkerStamp);
+    });
+
+    it("does not duplicate output messages in blocks after multiple readings", async () => {
+      const fakePlayer = new FakePlayer();
+      const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
+
+      const [done1, done2] = setListenerHelper(userNodePlayer, 2);
+
+      userNodePlayer.setSubscriptions([
+        { topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`, preloadType: "full" },
+      ]);
+      await userNodePlayer.setUserNodes({
+        [nodeId]: { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, sourceCode: nodeUserCode },
+      });
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+        },
+        progress: {
+          fullyLoadedFractionRanges: [{ start: 0, end: 1 }],
+          messageCache: {
+            blocks: [
+              { messagesByTopic: { [upstreamFirst.topic]: [upstreamFirst] }, sizeInBytes: 1 },
+              undefined,
+            ],
+            startTime: upstreamFirst.receiveTime,
+          },
+        },
+      });
+
+      const { progress: prevProgress } = (await done1)!;
+
+      // Current behavior dictates that it could be passed previous blocks that have already received user script output messages
+      prevProgress!.messageCache!.blocks = [
+        prevProgress!.messageCache!.blocks[0],
+        { messagesByTopic: { [upstreamFirst.topic]: [upstreamFirst] }, sizeInBytes: 1 },
+      ];
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+        },
+        progress: prevProgress,
+      });
+
+      const { progress } = (await done2)!;
+
+      expect(progress).toEqual({
+        fullyLoadedFractionRanges: [{ start: 0, end: 1 }],
+        messageCache: {
+          startTime: { sec: 0, nsec: 1 },
+          blocks: [
+            {
+              messagesByTopic: {
+                "/np_input": [upstreamFirst],
+                [`${DEFAULT_STUDIO_NODE_PREFIX}1`]: [
+                  {
+                    topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+                    receiveTime: {
+                      sec: 0,
+                      nsec: 1,
+                    },
+                    message: {
+                      custom_np_field: "abc",
+                      value: "bar",
+                      stamp: expect.any(Number),
+                    },
+                    schemaName: "/studio_script/1",
+                    sizeInBytes: 0,
+                  },
+                ],
+              },
+              sizeInBytes: 1,
+            },
+            {
+              messagesByTopic: {
+                "/np_input": [upstreamFirst],
+                [`${DEFAULT_STUDIO_NODE_PREFIX}1`]: [
+                  {
+                    topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+                    receiveTime: {
+                      sec: 0,
+                      nsec: 1,
+                    },
+                    message: {
+                      custom_np_field: "abc",
+                      value: "bar",
+                      stamp: expect.any(Number),
+                    },
+                    schemaName: "/studio_script/1",
                     sizeInBytes: 0,
                   },
                 ],
@@ -628,7 +870,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
@@ -649,7 +891,7 @@ describe("UserNodePlayer", () => {
       const datatypes: RosDatatypes = new Map(
         Object.entries({ foo: { definitions: [{ name: "payload", type: "string" }] } }),
       );
-      const topics = [{ name: "/np_input", datatype: "std_msgs/Header" }];
+      const topics: Topic[] = [{ name: "/np_input", schemaName: "std_msgs/Header" }];
 
       const [done1, done2] = setListenerHelper(userNodePlayer, 2);
       userNodePlayer.setSubscriptions([{ topic: `${DEFAULT_STUDIO_NODE_PREFIX}1` }]);
@@ -721,12 +963,12 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ "std_msgs/Header": { definitions: [] } })),
         },
       });
 
-      const { messages }: any = await done;
+      const { messages } = (await done)!;
 
       expect(mockSetNodeDiagnostics).toHaveBeenCalledWith(nodeId, []);
       expect(messages).toEqual([
@@ -735,6 +977,7 @@ describe("UserNodePlayer", () => {
           topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
           receiveTime: upstreamFirst.receiveTime,
           message: { a: 1, b: 0.7483314773547883, g: 0.7483314773547883, r: 1 },
+          schemaName: "/studio_script/1",
           sizeInBytes: 0,
         },
       ]);
@@ -768,12 +1011,12 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
 
-      const result: any = await done;
+      const result = (await done)!;
       expect(result.messages).toEqual([upstreamFirst]);
 
       await fakePlayer.emit({
@@ -781,7 +1024,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamSecond],
           currentTime: upstreamSecond.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });
@@ -793,6 +1036,7 @@ describe("UserNodePlayer", () => {
           topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
           receiveTime: upstreamSecond.receiveTime,
           message: { custom_np_field: "abc", value: "baz" },
+          schemaName: "/studio_script/1",
           sizeInBytes: 0,
         },
       ]);
@@ -824,19 +1068,19 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
         },
       });
 
-      const { messages, topics }: any = await done;
+      const { messages, topics } = (await done)!;
 
       expect(messages).toHaveLength(2);
-      expect(topics).toEqual([
-        { name: "/np_input", datatype: "std_msgs/Header" },
-        { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, datatype: `${DEFAULT_STUDIO_NODE_PREFIX}1` },
+      expect(topics).toEqual<typeof topics>([
+        { name: "/np_input", schemaName: "std_msgs/Header" },
+        { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}1` },
       ]);
       expect(mockSetNodeDiagnostics).toHaveBeenCalledWith(`${DEFAULT_STUDIO_NODE_PREFIX}1`, []);
       expect(mockSetNodeDiagnostics).toHaveBeenCalledWith(`${DEFAULT_STUDIO_NODE_PREFIX}2`, [
@@ -872,8 +1116,8 @@ describe("UserNodePlayer", () => {
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
           topics: [
-            { name: "/np_input", datatype: "std_msgs/Header" },
-            { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, datatype: "Something" },
+            { name: "/np_input", schemaName: "std_msgs/Header" },
+            { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, schemaName: "Something" },
           ],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
@@ -881,12 +1125,12 @@ describe("UserNodePlayer", () => {
         },
       });
 
-      const { messages, topics }: any = await done;
+      const { messages, topics } = (await done)!;
 
       expect(messages).toHaveLength(1);
-      expect(topics).toEqual([
-        { name: "/np_input", datatype: "std_msgs/Header" },
-        { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, datatype: "Something" },
+      expect(topics).toEqual<typeof topics>([
+        { name: "/np_input", schemaName: "std_msgs/Header" },
+        { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, schemaName: "Something" },
       ]);
       expect(mockSetNodeDiagnostics).toHaveBeenCalledWith(`${DEFAULT_STUDIO_NODE_PREFIX}1`, [
         {
@@ -933,27 +1177,29 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
         },
       });
 
-      const { messages }: any = await done;
+      const { messages } = (await done)!;
 
       expect(messages).toEqual([
         upstreamFirst,
         {
           topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
           receiveTime: upstreamFirst.receiveTime,
-          message: { custom_np_field: "abc", value: "bar" },
+          message: { custom_np_field: "abc", value: "bar", stamp: expect.any(Number) },
+          schemaName: "/studio_script/1",
           sizeInBytes: 0,
         },
         {
           topic: `${DEFAULT_STUDIO_NODE_PREFIX}2`,
           receiveTime: upstreamFirst.receiveTime,
-          message: { custom_np_field: "abc", value: "bar" },
+          message: { custom_np_field: "abc", value: "bar", stamp: expect.any(Number) },
+          schemaName: "/studio_script/2",
           sizeInBytes: 0,
         },
       ]);
@@ -986,7 +1232,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
@@ -1001,7 +1247,7 @@ describe("UserNodePlayer", () => {
           messages: [upstreamSecond],
           currentTime: upstreamSecond.receiveTime,
           lastSeekTime: 1,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
@@ -1114,14 +1360,14 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
         },
       });
 
-      const { topicNames, messages }: any = await done;
+      const { topicNames, messages } = (await done)!;
       expect(mockSetNodeDiagnostics).toHaveBeenLastCalledWith(nodeId, [
         {
           source: Sources.Runtime,
@@ -1145,14 +1391,14 @@ describe("UserNodePlayer", () => {
         [nodeId]: { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, sourceCode: nodeUserCode },
       });
 
-      const [firstDone, secondDone] = setListenerHelper(userNodePlayer, 2);
+      const [firstDone, secondDone, thirdDone] = setListenerHelper(userNodePlayer, 3);
 
       await fakePlayer.emit({
         activeData: {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
@@ -1162,21 +1408,25 @@ describe("UserNodePlayer", () => {
       const { topicNames: firstTopicNames }: any = await firstDone;
       expect(firstTopicNames).toEqual(["/np_input", `${DEFAULT_STUDIO_NODE_PREFIX}1`]);
 
-      void userNodePlayer.setUserNodes({});
+      await userNodePlayer.setUserNodes({});
+      const { topicNames: secondTopicNames }: any = await secondDone;
+      expect(secondTopicNames).toEqual(["/np_input", `${DEFAULT_STUDIO_NODE_PREFIX}1`]);
+
       await fakePlayer.emit({
         activeData: {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(
             Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
           ),
         },
       });
-      const { topicNames: secondTopicNames }: any = await secondDone;
-      expect(secondTopicNames).toEqual(["/np_input"]);
+      const { topicNames: thirdTopicNames }: any = await thirdDone;
+      expect(thirdTopicNames).toEqual(["/np_input"]);
     });
+
     it("properly sets diagnostics when there is an error", async () => {
       const code = `
         export const inputs = ["/np_input_does_not_exist"];
@@ -1264,14 +1514,14 @@ describe("UserNodePlayer", () => {
             ...basicPlayerState,
             messages: [upstreamFirst],
             currentTime: upstreamFirst.receiveTime,
-            topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+            topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
             datatypes: new Map(
               Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
             ),
           },
         });
 
-        const { topicNames }: any = await done;
+        const { topicNames } = (await done)!;
         expect(mockAddNodeLogs).toHaveBeenCalled();
         expect(mockAddNodeLogs.mock.calls).toEqual(logs.map((log) => [nodeId, log]));
         expect(topicNames).toEqual(["/np_input", `${DEFAULT_STUDIO_NODE_PREFIX}1`]);
@@ -1309,7 +1559,7 @@ describe("UserNodePlayer", () => {
             ...basicPlayerState,
             messages: [upstreamFirst],
             currentTime: upstreamFirst.receiveTime,
-            topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+            topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
             datatypes: new Map(
               Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
             ),
@@ -1319,7 +1569,7 @@ describe("UserNodePlayer", () => {
         userNodePlayer.setSubscriptions([{ topic: `${DEFAULT_STUDIO_NODE_PREFIX}1` }]);
         void userNodePlayer.setUserNodes({ nodeId: { name: "nodeName", sourceCode: code } });
 
-        const { topicNames }: any = await done;
+        const { topicNames } = (await done)!;
         expect(mockAddNodeLogs.mock.calls).toEqual([]);
         expect(topicNames).toEqual(["/np_input"]);
       });
@@ -1365,19 +1615,19 @@ describe("UserNodePlayer", () => {
             ...basicPlayerState,
             messages: [upstreamFirst],
             currentTime: upstreamFirst.receiveTime,
-            topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+            topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
             datatypes: new Map(
               Object.entries({ foo: { definitions: [] }, "std_msgs/Header": { definitions: [] } }),
             ),
           },
         });
 
-        const { topics }: any = await done;
-        expect(topics).toEqual([
-          { name: "/np_input", datatype: "std_msgs/Header" },
+        const { topics } = (await done)!;
+        expect(topics).toEqual<typeof topics>([
+          { name: "/np_input", schemaName: "std_msgs/Header" },
           {
             name: `${DEFAULT_STUDIO_NODE_PREFIX}state`,
-            datatype: `${DEFAULT_STUDIO_NODE_PREFIX}state`,
+            schemaName: `${DEFAULT_STUDIO_NODE_PREFIX}state`,
           },
         ]);
       });
@@ -1408,16 +1658,47 @@ describe("UserNodePlayer", () => {
             ...basicPlayerState,
             messages: [upstreamFirst],
             currentTime: upstreamFirst.receiveTime,
-            topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+            topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
             datatypes: exampleDatatypes,
           },
         });
 
-        const { topics }: any = await done;
-        expect(topics).toEqual([
-          { name: "/np_input", datatype: "std_msgs/Header" },
-          { name: `${DEFAULT_STUDIO_NODE_PREFIX}state`, datatype: "std_msgs/Header" },
+        const { topics } = (await done)!;
+        expect(topics).toEqual<typeof topics>([
+          { name: "/np_input", schemaName: "std_msgs/Header" },
+          { name: `${DEFAULT_STUDIO_NODE_PREFIX}state`, schemaName: "std_msgs/Header" },
         ]);
+      });
+      it("does not override dynamically generated datatypes with built-in datatypes", async () => {
+        const fakePlayer = new FakePlayer();
+        const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
+        void userNodePlayer.setUserNodes({
+          nodeId: { name: `${DEFAULT_STUDIO_NODE_PREFIX}1`, sourceCode: nodeUserCode },
+        });
+
+        const [done] = setListenerHelper(userNodePlayer);
+        await fakePlayer.emit({
+          activeData: {
+            ...basicPlayerState,
+            // Emit datatypes which includes the built-in type `std_msgs/Header`.
+            datatypes: new Map(
+              Object.entries({
+                "std_msgs/Header": {
+                  definitions: [
+                    { type: "string", name: "some_field", isArray: false, isComplex: false },
+                  ],
+                },
+              }),
+            ),
+          },
+        });
+
+        // We expect that the player's emitted `std_msgs/Header` datatype was not overriden by the
+        // built-in type.
+        const { datatypes } = (await done)!;
+        expect(datatypes?.get("std_msgs/Header")).toEqual({
+          definitions: [{ type: "string", name: "some_field", isArray: false, isComplex: false }],
+        });
       });
     });
 
@@ -1440,18 +1721,19 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         };
         await fakePlayer.emit({ activeData });
 
-        const { messages }: any = await done;
+        const { messages } = (await done)!;
         expect(messages).toEqual([
           upstreamFirst,
           {
             topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
             receiveTime: upstreamFirst.receiveTime,
             message: { custom_np_field: "aaa", value: "aaa" },
+            schemaName: "/studio_script/1",
             sizeInBytes: 0,
           },
         ]);
@@ -1459,13 +1741,65 @@ describe("UserNodePlayer", () => {
         userNodePlayer.setGlobalVariables({ globalValue: "bbb" });
         await fakePlayer.emit({ activeData });
 
-        const { messages: messages2 }: any = await done2;
+        const { messages: messages2 } = (await done2)!;
         expect(messages2).toEqual([
           upstreamFirst,
           {
             topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
             receiveTime: upstreamFirst.receiveTime,
             message: { custom_np_field: "bbb", value: "bbb" },
+            schemaName: "/studio_script/1",
+            sizeInBytes: 0,
+          },
+        ]);
+      });
+      it("should re-compute message after global variable change with no new messages in active data", async () => {
+        const fakePlayer = new FakePlayer();
+        const userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
+        const [done, done2] = setListenerHelper(userNodePlayer, 2);
+
+        userNodePlayer.setGlobalVariables({ globalValue: "aaa" });
+        userNodePlayer.setSubscriptions([{ topic: `${DEFAULT_STUDIO_NODE_PREFIX}1` }]);
+        await userNodePlayer.setUserNodes({
+          [nodeId]: {
+            name: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+            sourceCode: nodeUserCodeWithGlobalVars,
+          },
+        });
+
+        const activeData: PlayerStateActiveData = {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
+        };
+        await fakePlayer.emit({ activeData });
+
+        const { messages } = (await done)!;
+        expect(messages).toEqual([
+          upstreamFirst,
+          {
+            topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+            receiveTime: upstreamFirst.receiveTime,
+            message: { custom_np_field: "aaa", value: "aaa" },
+            schemaName: "/studio_script/1",
+            sizeInBytes: 0,
+          },
+        ]);
+
+        userNodePlayer.setGlobalVariables({ globalValue: "bbb" });
+        activeData.messages = [];
+        await fakePlayer.emit({ activeData });
+
+        const { messages: messages2 } = (await done2)!;
+        expect(messages2).toEqual([
+          upstreamFirst,
+          {
+            topic: `${DEFAULT_STUDIO_NODE_PREFIX}1`,
+            receiveTime: upstreamFirst.receiveTime,
+            message: { custom_np_field: "bbb", value: "bbb" },
+            schemaName: "/studio_script/1",
             sizeInBytes: 0,
           },
         ]);
@@ -1489,7 +1823,7 @@ describe("UserNodePlayer", () => {
       fakePlayer = new FakePlayer();
       userNodePlayer = new UserNodePlayer(fakePlayer, defaultUserNodeActions);
 
-      const topics = [{ name: "/np_input", datatype: "std_msgs/Header" }];
+      const topics: Topic[] = [{ name: "/np_input", schemaName: "std_msgs/Header" }];
       const datatypes = new Map(Object.entries({ foo: { definitions: [] } }));
 
       emit = async () => {
@@ -1511,6 +1845,7 @@ describe("UserNodePlayer", () => {
             topic: `${DEFAULT_STUDIO_NODE_PREFIX}0`,
             receiveTime: upstreamFirst.receiveTime,
             message: { key: sourceIndex },
+            schemaName: "/studio_script/0",
             sizeInBytes: 0,
           },
         ]);
@@ -1540,7 +1875,7 @@ describe("UserNodePlayer", () => {
       // New node 0, needs registration
       await userNodePlayer.setUserNodes({ nodeId0: userNode0 });
       emit();
-      const { messages: messages0 }: any = await donePromises[0];
+      const { messages: messages0 } = (await donePromises[0])!;
       expectFromSource(messages0, 0);
       expect(callCount("transform")).toBe(1);
       expect(callCount("processMessage")).toBe(1);
@@ -1548,27 +1883,27 @@ describe("UserNodePlayer", () => {
       // New node 1, needs registration
       await userNodePlayer.setUserNodes({ nodeId1: userNode1 });
       emit();
-      const { messages: messages1 }: any = await donePromises[1];
+      const { messages: messages1 } = (await donePromises[1])!;
       expectFromSource(messages1, 1);
       expect(callCount("transform")).toBe(2);
 
       // Should use cached registration from 0
       await userNodePlayer.setUserNodes({ nodeId0: userNode0 });
       emit();
-      const { messages: messages2 }: any = await donePromises[2];
+      const { messages: messages2 } = (await donePromises[2])!;
       expectFromSource(messages2, 0);
       expect(callCount("transform")).toBe(2); // Still 2
 
       // Should use cached registration from 1
       await userNodePlayer.setUserNodes({ nodeId0: userNode0 });
       emit();
-      const { messages: messages3 }: any = await donePromises[3];
+      const { messages: messages3 } = (await donePromises[3])!;
       expectFromSource(messages3, 0);
       expect(callCount("transform")).toBe(2); // Still 2
 
       await userNodePlayer.setUserNodes({ nodeId2: userNode2 });
       emit();
-      const { messages: messages4 }: any = await donePromises[4];
+      const { messages: messages4 } = (await donePromises[4])!;
       expectFromSource(messages4, 2);
       expect(callCount("transform")).toBe(3);
 
@@ -1584,7 +1919,7 @@ describe("UserNodePlayer", () => {
       // New node 0, needs registration
       await userNodePlayer.setUserNodes({ nodeId0: userNode0 });
       await emit();
-      const { messages: messages0 }: any = await donePromises[0];
+      const { messages: messages0 } = (await donePromises[0])!;
       expectFromSource(messages0, 0);
       expect(callCount("transform")).toBe(1);
       expect(callCount("processMessage")).toBe(1);
@@ -1599,7 +1934,7 @@ describe("UserNodePlayer", () => {
           ...basicPlayerState,
           messages: [upstreamFirst],
           currentTime: upstreamFirst.receiveTime,
-          topics: [{ name: "/np_input", datatype: "std_msgs/Header" }],
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
           datatypes: new Map(Object.entries({ foo: { definitions: [] } })),
         },
       });

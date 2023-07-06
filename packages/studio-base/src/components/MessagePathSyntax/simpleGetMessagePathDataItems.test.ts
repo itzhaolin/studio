@@ -9,21 +9,39 @@ import { simpleGetMessagePathDataItems } from "./simpleGetMessagePathDataItems";
 
 describe("simpleGetMessagePathDataItems", () => {
   it("returns root message if topic matches", () => {
-    const message: MessageEvent<unknown> = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       sizeInBytes: 0,
+      schemaName: "datatype",
       message: { foo: 42 },
     };
     expect(simpleGetMessagePathDataItems(message, parseRosPath("/foo")!)).toEqual([{ foo: 42 }]);
     expect(simpleGetMessagePathDataItems(message, parseRosPath("/bar")!)).toEqual([]);
   });
 
-  it("returns correct nested values", () => {
-    const message: MessageEvent<unknown> = {
+  it("supports TypedArray messages", () => {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       sizeInBytes: 0,
+      schemaName: "datatype",
+      message: {
+        bar: new Uint32Array([3, 4, 5]),
+      },
+    };
+    expect(simpleGetMessagePathDataItems(message, parseRosPath("/foo.bar")!)).toEqual([
+      new Uint32Array([3, 4, 5]),
+    ]);
+    expect(simpleGetMessagePathDataItems(message, parseRosPath("/foo.bar[0]")!)).toEqual([3]);
+  });
+
+  it("returns correct nested values", () => {
+    const message: MessageEvent = {
+      topic: "/foo",
+      receiveTime: { sec: 0, nsec: 0 },
+      sizeInBytes: 0,
+      schemaName: "datatype",
       message: {
         foo: {
           bars: [
@@ -53,20 +71,22 @@ describe("simpleGetMessagePathDataItems", () => {
   });
 
   it("returns nothing for missing fields", () => {
-    const message: MessageEvent<unknown> = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       sizeInBytes: 0,
+      schemaName: "datatype",
       message: { foo: 1 },
     };
     expect(simpleGetMessagePathDataItems(message, parseRosPath("/foo.foo.baz.hello")!)).toEqual([]);
   });
 
   it("throws for unsupported paths", () => {
-    const message: MessageEvent<unknown> = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       sizeInBytes: 0,
+      schemaName: "datatype",
       message: {
         foo: {
           bars: [

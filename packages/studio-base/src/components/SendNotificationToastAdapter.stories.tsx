@@ -11,7 +11,7 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { Story } from "@storybook/react";
+import { StoryFn, StoryObj } from "@storybook/react";
 import { useEffect } from "react";
 
 import SendNotificationToastAdapter from "@foxglove/studio-base/components/SendNotificationToastAdapter";
@@ -22,15 +22,15 @@ const fakeError = () => {
   const err = Error("This error is on purpose - it comes from the story");
 
   err.stack = `at http://localhost:49891/main.iframe.bundle.js:13051:22
-    at finalStoryFn (http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:56275:32)
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:53001:21
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:54920:16
-    at jsxDecorator (http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:48482:15)
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:53001:21
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:54884:12
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:54920:16
-    at withGrid (http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:45137:10)
-    at http://localhost:49891/vendors-node_modules_fluentui_react-icons-mdl2_lib_components_AddIcon_js-node_modules_fluentu-9a6f77.iframe.bundle.js:53001:21`;
+      at finalStoryFn (http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:56275:32)
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:53001:21
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:54920:16
+      at jsxDecorator (http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:48482:15)
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:53001:21
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:54884:12
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:54920:16
+      at withGrid (http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:45137:10)
+      at http://localhost:49891/some_vendor_library-name_component-name-9a6f77.iframe.bundle.js:53001:21`;
 
   return err;
 };
@@ -45,11 +45,11 @@ export default {
     colorScheme: "dark",
   },
   decorators: [
-    (StoryFn: Story): JSX.Element => {
+    (Wrapped: StoryFn): JSX.Element => {
       return (
         <div style={{ padding: 10, height: "300px" }}>
           <StudioToastProvider>
-            <StoryFn />
+            <Wrapped />
           </StudioToastProvider>
         </div>
       );
@@ -57,55 +57,65 @@ export default {
   ],
 };
 
-export const OneError = (): JSX.Element => {
-  useEffect(() => {
-    sendNotification("Something bad happened", fakeError(), "app", "error");
-  }, []);
+export const OneError: StoryObj = {
+  render: function Story() {
+    useEffect(() => {
+      sendNotification("Something bad happened", fakeError(), "app", "error");
+    }, []);
 
-  return <SendNotificationToastAdapter />;
+    return <SendNotificationToastAdapter />;
+  },
 };
 
-export const OneWarning = (): JSX.Element => {
-  useEffect(() => {
-    sendNotification(
-      "This is the final countdown",
-      "This warning is on purpose - it comes from the story",
-      "app",
-      "warn",
-    );
-  }, []);
+export const OneWarning: StoryObj = {
+  render: function Story() {
+    useEffect(() => {
+      sendNotification(
+        "This is the final countdown",
+        "This warning is on purpose - it comes from the story",
+        "app",
+        "warn",
+      );
+    }, []);
 
-  return <SendNotificationToastAdapter />;
+    return <SendNotificationToastAdapter />;
+  },
 };
 
-export const OneInfo = (): JSX.Element => {
-  useEffect(() => {
-    sendNotification(
-      "Here's a helpful tip",
-      "These are the details of the message",
-      "user",
-      "info",
-    );
-  }, []);
+export const OneInfo: StoryObj = {
+  render: function Story() {
+    useEffect(() => {
+      sendNotification(
+        "Here's a helpful tip",
+        "These are the details of the message",
+        "user",
+        "info",
+      );
+    }, []);
 
-  return <SendNotificationToastAdapter />;
+    return <SendNotificationToastAdapter />;
+  },
 };
 
-export const MultipleMessages = (): JSX.Element => {
-  useEffect(() => {
-    sendNotification("Something bad happened 1", fakeError(), "app", "error");
-    sendNotification("Here's a helpful tip", fakeError(), "user", "info");
-    sendNotification(
-      "Just a warning",
-      "This warning is on purpose - it comes from the story",
-      "app",
-      "warn",
-    );
-    sendNotification("Something bad happened 2", fakeError(), "app", "error");
-  }, []);
+export const MultipleMessages: StoryObj = {
+  render: function Story() {
+    useEffect(() => {
+      sendNotification("Something bad happened 1", fakeError(), "app", "error");
+      sendNotification("Here's a helpful tip", fakeError(), "user", "info");
+      sendNotification(
+        "Just a warning",
+        "This warning is on purpose - it comes from the story",
+        "app",
+        "warn",
+      );
+      sendNotification("Something bad happened 2", fakeError(), "app", "error");
+    }, []);
 
-  return <SendNotificationToastAdapter />;
+    return <SendNotificationToastAdapter />;
+  },
 };
 
-export const MultipleMessagesLightTheme = MultipleMessages.bind(undefined);
-(MultipleMessagesLightTheme as any).parameters = { colorScheme: "light" };
+export const MultipleMessagesLightTheme: StoryObj = {
+  ...MultipleMessages,
+  parameters: { colorScheme: "light" },
+};

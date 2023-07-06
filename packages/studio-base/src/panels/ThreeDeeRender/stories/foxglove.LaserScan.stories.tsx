@@ -2,22 +2,24 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { StoryObj } from "@storybook/react";
 import * as THREE from "three";
 
 import { fromSec } from "@foxglove/rostime";
 import { FrameTransform, LaserScan, PointCloud } from "@foxglove/schemas";
-import { MessageEvent, Topic } from "@foxglove/studio";
+import { MessageEvent } from "@foxglove/studio";
 import { xyzrpyToPose } from "@foxglove/studio-base/panels/ThreeDeeRender/transforms";
+import { Topic } from "@foxglove/studio-base/players/types";
 import PanelSetup from "@foxglove/studio-base/stories/PanelSetup";
 import { emptyPose } from "@foxglove/studio-base/util/Pose";
 
-import ThreeDeeRender from "../index";
 import { QUAT_IDENTITY, rad2deg } from "./common";
 import useDelayedFixture from "./useDelayedFixture";
+import { ThreeDeePanel } from "../index";
 
 export default {
   title: "panels/ThreeDeeRender/foxglove.LaserScan",
-  component: ThreeDeeRender,
+  component: ThreeDeePanel,
   parameters: { colorScheme: "dark" },
 };
 
@@ -33,8 +35,8 @@ function Foxglove_LaserScan({
   settings: Record<string, unknown>;
 }): JSX.Element {
   const topics: Topic[] = [
-    { name: "/scan", datatype: "foxglove.LaserScan" },
-    { name: "/tf", datatype: "foxglove.FrameTransform" },
+    { name: "/scan", schemaName: "foxglove.LaserScan" },
+    { name: "/tf", schemaName: "foxglove.FrameTransform" },
   ];
   const tf1: MessageEvent<FrameTransform> = {
     topic: "/tf",
@@ -46,6 +48,7 @@ function Foxglove_LaserScan({
       translation: { x: 1e7, y: 0, z: 0 },
       rotation: QUAT_IDENTITY,
     },
+    schemaName: "foxglove.FrameTransform",
     sizeInBytes: 0,
   };
   const tf2: MessageEvent<FrameTransform> = {
@@ -58,6 +61,7 @@ function Foxglove_LaserScan({
       translation: { x: 0, y: 0, z: 1 },
       rotation: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
     },
+    schemaName: "foxglove.FrameTransform",
     sizeInBytes: 0,
   };
   const tf3: MessageEvent<FrameTransform> = {
@@ -70,6 +74,7 @@ function Foxglove_LaserScan({
       translation: { x: 0, y: 5, z: 1 },
       rotation: QUAT_IDENTITY,
     },
+    schemaName: "foxglove.FrameTransform",
     sizeInBytes: 0,
   };
 
@@ -98,6 +103,7 @@ function Foxglove_LaserScan({
       ranges: ranges as unknown as number[],
       intensities: intensities as unknown as number[],
     },
+    schemaName: "foxglove.LaserScan",
     sizeInBytes: 0,
   };
 
@@ -115,7 +121,7 @@ function Foxglove_LaserScan({
 
   return (
     <PanelSetup fixture={fixture}>
-      <ThreeDeeRender
+      <ThreeDeePanel
         overrideConfig={{
           followTf: "base_link",
           scene: { enableStats: false },
@@ -150,192 +156,205 @@ function Foxglove_LaserScan({
   );
 }
 
-export const Square = Object.assign(Foxglove_LaserScan.bind({}), {
+export const Square: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     settings: {
       pointShape: "square",
     },
   },
-});
+};
 
-export const Size20 = Object.assign(Foxglove_LaserScan.bind({}), {
+export const Size20: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     settings: {
       pointSize: 20,
     },
   },
-});
+};
 
-export const FlatColor = Object.assign(Foxglove_LaserScan.bind({}), {
+export const FlatColor: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     settings: {
       colorMode: "flat",
       flatColor: "#ff00ff",
     },
   },
-});
+};
 
-export const CustomGradient = Object.assign(Foxglove_LaserScan.bind({}), {
+export const CustomGradient: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     settings: {
       colorMode: "gradient",
       gradient: ["#00ffff", "#0000ff"],
     },
   },
-});
+};
 
-export const RangeLimits = Object.assign(Foxglove_LaserScan.bind({}), {
+export const RangeLimits: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     rangeMin: 2,
     rangeMax: 3,
   },
-});
+};
 
-export const Time0 = Object.assign(Foxglove_LaserScan.bind({}), {
+export const Time0: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     time: 0,
   },
-});
+};
 
-export const Time5 = Object.assign(Foxglove_LaserScan.bind({}), {
+export const Time5: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     time: 5,
   },
-});
+};
 
-export const Time10 = Object.assign(Foxglove_LaserScan.bind({}), {
+export const Time10: StoryObj<Parameters<typeof Foxglove_LaserScan>[0]> = {
+  render: Foxglove_LaserScan,
   args: {
     time: 10,
   },
-});
+};
 
-export function ComparisonWithPointCloudColors(): JSX.Element {
-  const topics: Topic[] = [
-    { name: "/scan", datatype: "foxglove.LaserScan" },
-    { name: "/cloud", datatype: "foxglove.PointCloud" },
-    { name: "/tf", datatype: "foxglove.FrameTransform" },
-  ];
-  const tf1: MessageEvent<FrameTransform> = {
-    topic: "/tf",
-    receiveTime: { sec: 10, nsec: 0 },
-    message: {
-      timestamp: { sec: 0, nsec: 0 },
-      parent_frame_id: "map",
-      child_frame_id: "base_link",
-      translation: { x: 1e7, y: 0, z: 0 },
-      rotation: QUAT_IDENTITY,
-    },
-    sizeInBytes: 0,
-  };
+export const ComparisonWithPointCloudColors: StoryObj = {
+  render: function Story() {
+    const topics: Topic[] = [
+      { name: "/scan", schemaName: "foxglove.LaserScan" },
+      { name: "/cloud", schemaName: "foxglove.PointCloud" },
+      { name: "/tf", schemaName: "foxglove.FrameTransform" },
+    ];
+    const tf1: MessageEvent<FrameTransform> = {
+      topic: "/tf",
+      receiveTime: { sec: 10, nsec: 0 },
+      message: {
+        timestamp: { sec: 0, nsec: 0 },
+        parent_frame_id: "map",
+        child_frame_id: "base_link",
+        translation: { x: 1e7, y: 0, z: 0 },
+        rotation: QUAT_IDENTITY,
+      },
+      schemaName: "foxglove.FrameTransform",
+      sizeInBytes: 0,
+    };
 
-  const count = 50;
+    const count = 50;
 
-  const ranges = new Float32Array(count);
-  const intensities = new Float32Array(count);
-  const pointCloudData = new Float32Array(4 * count);
-  const angleMax = Math.PI / 4;
-  const radius = 2;
+    const ranges = new Float32Array(count);
+    const intensities = new Float32Array(count);
+    const pointCloudData = new Float32Array(4 * count);
+    const angleMax = Math.PI / 4;
+    const radius = 2;
 
-  for (let i = 0; i < count; i++) {
-    const t = i / (count - 1);
-    ranges[i] = radius / Math.cos(angleMax * t);
-    intensities[i] = t;
-    pointCloudData[4 * i + 0] = 1; // x
-    pointCloudData[4 * i + 1] = radius * t; // y
-    pointCloudData[4 * i + 2] = 0; // z
-    pointCloudData[4 * i + 3] = t; // intensity
-  }
+    for (let i = 0; i < count; i++) {
+      const t = i / (count - 1);
+      ranges[i] = radius / Math.cos(angleMax * t);
+      intensities[i] = t;
+      pointCloudData[4 * i + 0] = 1; // x
+      pointCloudData[4 * i + 1] = radius * t; // y
+      pointCloudData[4 * i + 2] = 0; // z
+      pointCloudData[4 * i + 3] = t; // intensity
+    }
 
-  const laserScan: MessageEvent<LaserScan> = {
-    topic: "/scan",
-    receiveTime: { sec: 10, nsec: 0 },
-    message: {
-      timestamp: { sec: 0, nsec: 0 },
-      frame_id: "base_link",
-      pose: emptyPose(),
-      start_angle: 0,
-      end_angle: angleMax,
-      ranges: ranges as unknown as number[],
-      intensities: intensities as unknown as number[],
-    },
-    sizeInBytes: 0,
-  };
+    const laserScan: MessageEvent<LaserScan> = {
+      topic: "/scan",
+      receiveTime: { sec: 10, nsec: 0 },
+      message: {
+        timestamp: { sec: 0, nsec: 0 },
+        frame_id: "base_link",
+        pose: emptyPose(),
+        start_angle: 0,
+        end_angle: angleMax,
+        ranges: ranges as unknown as number[],
+        intensities: intensities as unknown as number[],
+      },
+      schemaName: "foxglove.LaserScan",
+      sizeInBytes: 0,
+    };
 
-  const pointCloud: MessageEvent<PointCloud> = {
-    topic: "/cloud",
-    receiveTime: { sec: 10, nsec: 0 },
-    message: {
-      timestamp: { sec: 0, nsec: 0 },
-      frame_id: "base_link",
-      pose: emptyPose(),
-      point_stride: 16,
-      fields: [
-        { name: "x", offset: 0, type: 7 },
-        { name: "y", offset: 4, type: 7 },
-        { name: "z", offset: 8, type: 7 },
-        { name: "intensity", offset: 12, type: 7 },
-      ],
-      data: new Uint8Array(
-        pointCloudData.buffer,
-        pointCloudData.byteOffset,
-        pointCloudData.byteLength,
-      ),
-    },
-    sizeInBytes: 0,
-  };
+    const pointCloud: MessageEvent<PointCloud> = {
+      topic: "/cloud",
+      receiveTime: { sec: 10, nsec: 0 },
+      message: {
+        timestamp: { sec: 0, nsec: 0 },
+        frame_id: "base_link",
+        pose: emptyPose(),
+        point_stride: 16,
+        fields: [
+          { name: "x", offset: 0, type: 7 },
+          { name: "y", offset: 4, type: 7 },
+          { name: "z", offset: 8, type: 7 },
+          { name: "intensity", offset: 12, type: 7 },
+        ],
+        data: new Uint8Array(
+          pointCloudData.buffer,
+          pointCloudData.byteOffset,
+          pointCloudData.byteLength,
+        ),
+      },
+      schemaName: "foxglove.PointCloud",
+      sizeInBytes: 0,
+    };
 
-  const fixture = useDelayedFixture({
-    topics,
-    frame: {
-      "/scan": [laserScan],
-      "/cloud": [pointCloud],
-      "/tf": [tf1],
-    },
-    capabilities: [],
-    activeData: {
-      currentTime: fromSec(0),
-    },
-  });
+    const fixture = useDelayedFixture({
+      topics,
+      frame: {
+        "/scan": [laserScan],
+        "/cloud": [pointCloud],
+        "/tf": [tf1],
+      },
+      capabilities: [],
+      activeData: {
+        currentTime: fromSec(0),
+      },
+    });
 
-  return (
-    <PanelSetup fixture={fixture}>
-      <ThreeDeeRender
-        overrideConfig={{
-          followTf: "base_link",
-          scene: { enableStats: false },
-          topics: {
-            "/scan": {
-              visible: true,
-              pointSize: 10,
-              colorMode: "colormap",
-              colorMap: "turbo",
-              colorField: "intensity",
+    return (
+      <PanelSetup fixture={fixture}>
+        <ThreeDeePanel
+          overrideConfig={{
+            followTf: "base_link",
+            scene: { enableStats: false },
+            topics: {
+              "/scan": {
+                visible: true,
+                pointSize: 10,
+                colorMode: "colormap",
+                colorMap: "turbo",
+                colorField: "intensity",
+              },
+              "/cloud": {
+                visible: true,
+                pointSize: 10,
+                colorMode: "colormap",
+                colorMap: "turbo",
+                colorField: "intensity",
+              },
             },
-            "/cloud": {
-              visible: true,
-              pointSize: 10,
-              colorMode: "colormap",
-              colorMap: "turbo",
-              colorField: "intensity",
+            layers: {
+              grid: { layerId: "foxglove.Grid" },
             },
-          },
-          layers: {
-            grid: { layerId: "foxglove.Grid" },
-          },
-          cameraState: {
-            distance: 5,
-            perspective: false,
-            phi: rad2deg(0),
-            targetOffset: [0, 1, 0],
-            thetaOffset: rad2deg(0),
-            fovy: rad2deg(0.75),
-            near: 0.01,
-            far: 5000,
-            target: [0, 0, 0],
-            targetOrientation: [0, 0, 0, 1],
-          },
-        }}
-      />
-    </PanelSetup>
-  );
-}
+            cameraState: {
+              distance: 5,
+              perspective: false,
+              phi: rad2deg(0),
+              targetOffset: [0, 1, 0],
+              thetaOffset: rad2deg(0),
+              fovy: rad2deg(0.75),
+              near: 0.01,
+              far: 5000,
+              target: [0, 0, 0],
+              targetOrientation: [0, 0, 0, 1],
+            },
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+};

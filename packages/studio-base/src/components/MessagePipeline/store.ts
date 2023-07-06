@@ -43,9 +43,10 @@ export type MessagePipelineInternalState = {
 
   subscriptionsById: Map<string, SubscribePayload[]>;
   publishersById: { [key: string]: AdvertiseOptions[] };
+  allPublishers: AdvertiseOptions[];
   subscriberIdsByTopic: Map<string, string[]>;
   newTopicsBySubscriberId: Map<string, Set<string>>;
-  lastMessageEventByTopic: Map<string, MessageEvent<unknown>>;
+  lastMessageEventByTopic: Map<string, MessageEvent>;
   /** Function to call when react render has completed with the latest state */
   renderDone?: () => void;
 
@@ -83,6 +84,7 @@ export function createMessagePipelineStore({
       set((state) => reducer(state, action));
     },
     publishersById: {},
+    allPublishers: [],
     subscriptionsById: new Map(),
     subscriberIdsByTopic: new Map(),
     newTopicsBySubscriberId: new Map(),
@@ -93,7 +95,6 @@ export function createMessagePipelineStore({
       playerState: defaultPlayerState(),
       messageEventsBySubscriberId: new Map(),
       subscriptions: [],
-      publishers: [],
       sortedTopics: [],
       datatypes: new Map(),
       setSubscriptions(id, payloads) {
@@ -101,6 +102,7 @@ export function createMessagePipelineStore({
       },
       setPublishers(id, payloads) {
         get().dispatch({ type: "set-publishers", id, payloads });
+        get().player?.setPublishers(get().allPublishers);
       },
       setParameter(key, value) {
         get().player?.setParameter(key, value);
@@ -204,7 +206,7 @@ function updatePlayerStateAction(
 
   // We need a new set of message arrays for each subscriber since downstream users rely
   // on object instance reference checks to determine if there are new messages
-  const messagesBySubscriberId = new Map<string, MessageEvent<unknown>[]>();
+  const messagesBySubscriberId = new Map<string, MessageEvent[]>();
 
   const subsById = prevState.subscriptionsById;
   const subscriberIdsByTopic = prevState.subscriberIdsByTopic;
@@ -323,7 +325,7 @@ export function reducer(
       return {
         ...prevState,
         publishersById: newPublishersById,
-        public: { ...prevState.public, publishers: flatten(Object.values(newPublishersById)) },
+        allPublishers: flatten(Object.values(newPublishersById)),
       };
     }
 
@@ -335,10 +337,12 @@ export function reducer(
         ...prevState,
         player: action.player,
         lastCapabilities: [],
+        lastMessageEventByTopic: new Map(),
         public: {
           ...prevState.public,
           sortedTopics: [],
           datatypes: new Map(),
+          messageEventsBySubscriberId: new Map(),
           startPlayback: undefined,
           pausePlayback: undefined,
           playUntil: undefined,

@@ -105,9 +105,9 @@ export function NumberInput(
         newValue == undefined
           ? undefined
           : clamp(newValue, min ?? Number.NEGATIVE_INFINITY, max ?? Number.POSITIVE_INFINITY);
-      onChange(clampedValue);
+      onChange(clampedValue != undefined ? Number(clampedValue.toFixed(precision)) : clampedValue);
     },
-    [disabled, readOnly, min, max, onChange],
+    [disabled, readOnly, min, max, onChange, precision],
   );
 
   const onPointerDown = useCallback(
@@ -168,6 +168,7 @@ export function NumberInput(
             className={classes.iconButton}
             size="small"
             edge="start"
+            tabIndex={-1} // Disable tabbing to the step buttons.
             onClick={(event: React.MouseEvent) =>
               updateValue((value ?? placeHolderValue ?? 0) - (event.shiftKey ? step * 10 : step))
             }
@@ -180,6 +181,7 @@ export function NumberInput(
             className={classes.iconButton}
             size="small"
             edge="end"
+            tabIndex={-1} // Disable tabbing to the step buttons.
             onClick={(event: React.MouseEvent) =>
               updateValue((value ?? placeHolderValue ?? 0) + (event.shiftKey ? step * 10 : step))
             }

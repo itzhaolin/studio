@@ -2,32 +2,33 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import ClearIcon from "@mui/icons-material/Clear";
+import CancelIcon from "@mui/icons-material/Cancel";
 import ErrorIcon from "@mui/icons-material/Error";
 import {
   Autocomplete,
+  MenuItem,
+  MenuList,
+  MenuListProps,
+  Select,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Typography,
-  List,
-  MenuItem,
-  Select,
   Tooltip,
-  TextField,
-  ListProps,
+  Typography,
 } from "@mui/material";
-import { DeepReadonly } from "ts-essentials";
 import { makeStyles } from "tss-react/mui";
 import { v4 as uuid } from "uuid";
 
-import { SettingsTreeAction, SettingsTreeField } from "@foxglove/studio";
+import { Immutable, SettingsTreeAction, SettingsTreeField } from "@foxglove/studio";
 import MessagePathInput from "@foxglove/studio-base/components/MessagePathSyntax/MessagePathInput";
 import Stack from "@foxglove/studio-base/components/Stack";
 
-import { ColorPickerInput, ColorGradientInput, NumberInput, Vec3Input, Vec2Input } from "./inputs";
+import { ColorGradientInput, ColorPickerInput, NumberInput, Vec2Input, Vec3Input } from "./inputs";
 
-// Used to both undefined and empty string in select inputs.
+/** Used to allow both undefined and empty string in select inputs. */
 const UNDEFINED_SENTINEL_VALUE = uuid();
+/** Used to avoid MUI errors when an invalid option is selected */
+const INVALID_SENTINEL_VALUE = uuid();
 
 const useStyles = makeStyles<void, "error">()((theme, _params, classes) => {
   const prefersDarkMode = theme.palette.mode === "dark";
@@ -36,6 +37,21 @@ const useStyles = makeStyles<void, "error">()((theme, _params, classes) => {
     : "rgba(0, 0, 0, 0.06)";
 
   return {
+    autocomplete: {
+      ".MuiInputBase-root.MuiInputBase-sizeSmall": {
+        paddingInline: 0,
+        paddingBlock: theme.spacing(0.3125),
+      },
+    },
+    clearIndicator: {
+      marginRight: theme.spacing(-0.25),
+      opacity: theme.palette.action.disabledOpacity,
+
+      ":hover": {
+        background: "transparent",
+        opacity: 1,
+      },
+    },
     error: {},
     fieldLabel: {
       color: theme.palette.text.secondary,
@@ -44,12 +60,11 @@ const useStyles = makeStyles<void, "error">()((theme, _params, classes) => {
       whiteSpace: "nowrap",
     },
     fieldWrapper: {
-      marginRight: theme.spacing(1.25),
-      [`&.${classes.error}`]: {
-        ".MuiInputBase-root": {
-          outline: `1px ${theme.palette.error.main} solid`,
-          outlineOffset: -1,
-        },
+      minWidth: theme.spacing(14),
+      marginRight: theme.spacing(0.5),
+      [`&.${classes.error} .MuiInputBase-root, .MuiInputBase-root.${classes.error}`]: {
+        outline: `1px ${theme.palette.error.main} solid`,
+        outlineOffset: -1,
       },
     },
     multiLabelWrapper: {
@@ -62,13 +77,12 @@ const useStyles = makeStyles<void, "error">()((theme, _params, classes) => {
       textAlign: "end",
     },
     pseudoInputWrapper: {
-      padding: theme.spacing(0.75, 1),
       borderRadius: theme.shape.borderRadius,
       fontSize: "0.75em",
       backgroundColor: inputBackgroundColor,
 
       input: {
-        height: "1.4375em",
+        height: "1.77em",
       },
       "&:hover": {
         backgroundColor: prefersDarkMode ? "rgba(255, 255, 255, 0.13)" : "rgba(0, 0, 0, 0.09)",
@@ -84,13 +98,14 @@ const useStyles = makeStyles<void, "error">()((theme, _params, classes) => {
     styledToggleButtonGroup: {
       backgroundColor: theme.palette.action.hover,
       gap: theme.spacing(0.25),
+      overflowX: "auto",
 
       "& .MuiToggleButtonGroup-grouped": {
         margin: theme.spacing(0.55),
         borderRadius: theme.shape.borderRadius,
         paddingTop: 0,
         paddingBottom: 0,
-        borderColor: "transparent",
+        borderColor: "transparent !important",
         lineHeight: 1.75,
 
         "&.Mui-selected": {
@@ -118,30 +133,38 @@ function FieldInput({
   path,
 }: {
   actionHandler: (action: SettingsTreeAction) => void;
-  field: DeepReadonly<SettingsTreeField>;
+  field: Immutable<SettingsTreeField>;
   path: readonly string[];
 }): JSX.Element {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
 
   switch (field.input) {
     case "autocomplete":
       return (
         <Autocomplete
+          className={classes.autocomplete}
           size="small"
           freeSolo={true}
           value={field.value}
           disabled={field.disabled}
           readOnly={field.readonly}
-          ListboxComponent={List}
-          ListboxProps={{ dense: true } as Partial<ListProps>}
+          ListboxComponent={MenuList}
+          ListboxProps={{ dense: true } as Partial<MenuListProps>}
           renderOption={(props, option, { selected }) => (
             <MenuItem selected={selected} {...props}>
               {option}
             </MenuItem>
           )}
-          componentsProps={{ clearIndicator: { size: "small" } }}
-          clearIcon={<ClearIcon fontSize="small" />}
-          renderInput={(params) => <TextField {...params} variant="filled" size="small" />}
+          componentsProps={{
+            clearIndicator: {
+              size: "small",
+              className: classes.clearIndicator,
+            },
+          }}
+          clearIcon={<CancelIcon fontSize="small" />}
+          renderInput={(params) => (
+            <TextField {...params} variant="filled" size="small" placeholder={field.placeholder} />
+          )}
           onInputChange={(_event, value) =>
             actionHandler({ action: "update", payload: { path, input: "autocomplete", value } })
           }
@@ -183,7 +206,7 @@ function FieldInput({
           disabled={field.disabled}
           size="small"
           onChange={(_event, value) => {
-            if (field.readonly !== true) {
+            if (value != undefined && field.readonly !== true) {
               actionHandler({
                 action: "update",
                 payload: {
@@ -197,10 +220,10 @@ function FieldInput({
         >
           {field.options.map((opt) => (
             <ToggleButton
-              key={(typeof opt === "string" ? opt : opt.value) ?? UNDEFINED_SENTINEL_VALUE}
-              value={(typeof opt === "string" ? opt : opt.value) ?? UNDEFINED_SENTINEL_VALUE}
+              key={(typeof opt === "object" ? opt.value : opt) ?? UNDEFINED_SENTINEL_VALUE}
+              value={(typeof opt === "object" ? opt.value : opt) ?? UNDEFINED_SENTINEL_VALUE}
             >
-              {typeof opt === "string" ? opt : opt.label}
+              {typeof opt === "object" ? opt.label : opt}
             </ToggleButton>
           ))}
         </ToggleButtonGroup>
@@ -261,6 +284,7 @@ function FieldInput({
               payload: { path, input: "rgb", value },
             })
           }
+          hideClearButton={field.hideClearButton}
         />
       );
     case "rgba":
@@ -286,6 +310,7 @@ function FieldInput({
             path={field.value ?? ""}
             disabled={field.disabled}
             readOnly={field.readonly}
+            supportsMathModifiers={field.supportsMathModifiers}
             onChange={(value) =>
               actionHandler({
                 action: "update",
@@ -296,23 +321,42 @@ function FieldInput({
           />
         </Stack>
       );
-    case "select":
+    case "select": {
+      const selectedOptionIndex = // use findIndex instead of find to avoid confusing TypeScript with union of arrays
+        field.options.findIndex((option) => option.value === field.value);
+      const selectedOption = field.options[selectedOptionIndex];
+
+      const isEmpty = field.options.length === 0;
+      let selectValue = field.value;
+      if (!selectedOption) {
+        selectValue = INVALID_SENTINEL_VALUE;
+      } else if (selectValue == undefined) {
+        // We can't pass value={undefined} or we get a React error "A component is changing an
+        // uncontrolled input to be controlled" when changing the value to be non-undefined.
+        selectValue = UNDEFINED_SENTINEL_VALUE;
+      }
+
+      const hasError = !selectedOption && (!isEmpty || field.value != undefined);
       return (
         <Select
+          className={cx({ [classes.error]: hasError })}
           size="small"
           displayEmpty
           fullWidth
           disabled={field.disabled}
           readOnly={field.readonly}
           variant="filled"
-          value={field.value ?? UNDEFINED_SENTINEL_VALUE}
-          renderValue={(value) => {
+          value={selectValue}
+          renderValue={(_value) => {
+            // Use field.value rather than the passed-in value so we can render the value even when
+            // it was not present in the list of options.
+            const value = field.value;
             for (const option of field.options) {
               if (option.value === value) {
                 return option.label.trim();
               }
             }
-            return undefined;
+            return value;
           }}
           onChange={(event) =>
             actionHandler({
@@ -334,8 +378,13 @@ function FieldInput({
               {label}
             </MenuItem>
           ))}
+          {isEmpty && <MenuItem disabled>No options</MenuItem>}
+          {!selectedOption && (
+            <MenuItem style={{ display: "none" }} value={INVALID_SENTINEL_VALUE} />
+          )}
         </Select>
       );
+    }
     case "gradient":
       return (
         <ColorGradientInput
@@ -382,7 +431,7 @@ function FieldInput({
   }
 }
 
-function FieldLabel({ field }: { field: DeepReadonly<SettingsTreeField> }): JSX.Element {
+function FieldLabel({ field }: { field: Immutable<SettingsTreeField> }): JSX.Element {
   const { classes } = useStyles();
 
   if (field.input === "vec2") {
@@ -466,7 +515,7 @@ function FieldEditorComponent({
   path,
 }: {
   actionHandler: (action: SettingsTreeAction) => void;
-  field: DeepReadonly<SettingsTreeField>;
+  field: Immutable<SettingsTreeField>;
   path: readonly string[];
 }): JSX.Element {
   const indent = Math.min(path.length, 4);

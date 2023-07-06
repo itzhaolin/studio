@@ -7,7 +7,7 @@ import { isEmpty } from "lodash";
 import { Fragment } from "react";
 import { makeStyles } from "tss-react/mui";
 
-import { subtract as subtractTimes, toSec, fromSec } from "@foxglove/rostime";
+import { subtract as subtractTimes, toSec, Time } from "@foxglove/rostime";
 import {
   MessagePipelineContext,
   useMessagePipeline,
@@ -30,13 +30,14 @@ const useStyles = makeStyles()((theme) => ({
     opacity: 0.5,
   },
   tooltipWrapper: {
-    fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, "zero"`,
+    fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
     fontFamily: fonts.SANS_SERIF,
     whiteSpace: "nowrap",
     columnGap: theme.spacing(0.5),
     display: "grid",
     alignItems: "center",
-    gridTemplateColumns: "auto 1fr",
+    gridTemplateColumns: "auto auto",
+    width: "100%",
     flexDirection: "column",
   },
   itemKey: {
@@ -50,10 +51,8 @@ const useStyles = makeStyles()((theme) => ({
 const selectHoveredEvents = (store: TimelineInteractionStateStore) => store.eventsAtHoverValue;
 const selectStartTime = (ctx: MessagePipelineContext) => ctx.playerState.activeData?.startTime;
 
-export function PlaybackControlsTooltipContent(params: {
-  hoverXPosition: number;
-}): ReactNull | JSX.Element {
-  const { hoverXPosition } = params;
+export function PlaybackControlsTooltipContent(params: { stamp: Time }): ReactNull | JSX.Element {
+  const { stamp } = params;
   const { formatTime, timeFormat } = useAppTimeFormat();
   const hoveredEvents = useTimelineInteractionState(selectHoveredEvents);
   const startTime = useMessagePipeline(selectStartTime);
@@ -63,7 +62,6 @@ export function PlaybackControlsTooltipContent(params: {
     return ReactNull;
   }
 
-  const stamp = fromSec(hoverXPosition);
   const timeFromStart = subtractTimes(stamp, startTime);
 
   const tooltipItems: PlaybackControlsTooltipItem[] = [];
@@ -112,8 +110,12 @@ export function PlaybackControlsTooltipContent(params: {
         }
         return (
           <Fragment key={`${item.title}_${idx}`}>
-            <Typography className={classes.itemKey}>{item.title}</Typography>
-            <Typography variant="subtitle2">{item.value}</Typography>
+            <Typography className={classes.itemKey} noWrap>
+              {item.title}
+            </Typography>
+            <Typography variant="subtitle2" noWrap>
+              {item.value}
+            </Typography>
           </Fragment>
         );
       })}

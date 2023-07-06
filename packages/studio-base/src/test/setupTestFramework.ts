@@ -14,7 +14,9 @@
 import { diff } from "jest-diff";
 import { isEqual } from "lodash";
 
+import { initI18n } from "@foxglove/studio-base/i18n";
 import {
+  setupMockSendNotification,
   mockSendNotification,
   mockSetNotificationHandler,
 } from "@foxglove/studio-base/test/MockSendNotification";
@@ -27,6 +29,9 @@ jest.mock("@foxglove/studio-base/util/sendNotification", () => {
     setNotificationHandler: mockSetNotificationHandler,
   };
 });
+beforeEach(() => {
+  setupMockSendNotification();
+});
 
 // intercept console.error and console.warn calls to fail tests if they are called
 // the user can indicate they expect the call to happen by checking the mock.calls
@@ -37,6 +42,10 @@ const origError = console.error;
 const origWarn = console.warn;
 const consoleErrorMock = (console.error = jest.fn());
 const consoleWarnMock = (console.warn = jest.fn());
+
+beforeAll(async () => {
+  await initI18n();
+});
 
 beforeEach(() => {
   consoleErrorMock.mockClear();

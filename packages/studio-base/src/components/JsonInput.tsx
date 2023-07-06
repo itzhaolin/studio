@@ -25,9 +25,9 @@ const { useState, useCallback, useRef, useLayoutEffect, useEffect } = React;
 
 const useStyles = makeStyles()((theme) => ({
   editor: {
-    backgroundColor: "transparent",
-    font: "inherit",
-    fontFamily: fonts.MONOSPACE,
+    backgroundColor: "transparent !important",
+    font: "inherit !important",
+    fontFamily: `${fonts.MONOSPACE} !important`,
     overflow: "auto",
   },
   error: {
@@ -49,7 +49,7 @@ export type BaseProps = {
   onChange?: OnChange;
   onError?: (err: string) => void;
   readOnly?: boolean;
-  maxHeight?: number;
+  maxHeight?: number | "auto" | "none";
   value: Value;
 };
 
@@ -177,6 +177,7 @@ function ValidatedInputBase({
         value={inputStr}
         onChange={handleChange}
         language="json"
+        onBlur={() => setIsEditing(false)}
         padding={12}
         style={{ maxHeight: maxHeight ?? 300 }}
       />
@@ -202,8 +203,8 @@ export default function JsonInput(props: BaseProps): JSX.Element {
   }
 
   return (
-    <Stack style={{ maxHeight: 800 }} overflowY="auto">
-      <ValidatedInputBase parse={JSON.parse} stringify={stringify} {...props} />
+    <Stack>
+      <ValidatedInputBase parse={JSON.parse} stringify={stringify} {...props} maxHeight="none" />
     </Stack>
   );
 }

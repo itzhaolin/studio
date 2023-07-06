@@ -2,25 +2,27 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { screen } from "@testing-library/react";
+import { StoryObj } from "@storybook/react";
+import { screen } from "@storybook/testing-library";
 
-import { MessageEvent, Topic } from "@foxglove/studio";
-import { PlayerCapabilities } from "@foxglove/studio-base/players/types";
+import { MessageEvent } from "@foxglove/studio";
+import { PlayerCapabilities, Topic } from "@foxglove/studio-base/players/types";
 import PanelSetup from "@foxglove/studio-base/stories/PanelSetup";
 import delay from "@foxglove/studio-base/util/delay";
 
-import ThreeDeeRender from "../index";
-import { PublishClickType } from "../renderables/PublishClickTool";
-import { TransformStamped } from "../ros";
 import { QUAT_IDENTITY, rad2deg } from "./common";
 import useDelayedFixture from "./useDelayedFixture";
+import { ThreeDeePanel } from "../index";
+import { PublishClickType } from "../renderables/PublishClickTool";
+import { TransformStamped } from "../ros";
 
 export default {
   title: "panels/ThreeDeeRender/PublishClickTool",
-  component: ThreeDeeRender,
+  component: ThreeDeePanel,
 };
 
-export const Point = Object.assign(PublishClickToolTemplate.bind({}), {
+export const Point: StoryObj<{ type: PublishClickType }> = {
+  render: PublishClickToolTemplate,
   parameters: { colorScheme: "dark" },
   args: { type: "point" },
   play: async () => {
@@ -34,9 +36,10 @@ export const Point = Object.assign(PublishClickToolTemplate.bind({}), {
     await delay(10);
     await new Promise((resolve) => requestAnimationFrame(resolve));
   },
-});
+};
 
-export const PosePosition = Object.assign(PublishClickToolTemplate.bind({}), {
+export const PosePosition: StoryObj<{ type: PublishClickType }> = {
+  render: PublishClickToolTemplate,
   parameters: { colorScheme: "dark" },
   args: { type: "pose" },
   play: async () => {
@@ -50,9 +53,10 @@ export const PosePosition = Object.assign(PublishClickToolTemplate.bind({}), {
     await delay(10);
     await new Promise((resolve) => requestAnimationFrame(resolve));
   },
-});
+};
 
-export const PoseComplete = Object.assign(PublishClickToolTemplate.bind({}), {
+export const PoseComplete: StoryObj<{ type: PublishClickType }> = {
+  render: PublishClickToolTemplate,
   parameters: { colorScheme: "dark" },
   args: { type: "pose" },
   play: async () => {
@@ -72,9 +76,10 @@ export const PoseComplete = Object.assign(PublishClickToolTemplate.bind({}), {
     await delay(100);
     await new Promise((resolve) => requestAnimationFrame(resolve));
   },
-});
+};
 
-export const PoseEstimatePosition = Object.assign(PublishClickToolTemplate.bind({}), {
+export const PoseEstimatePosition: StoryObj<{ type: PublishClickType }> = {
+  render: PublishClickToolTemplate,
   parameters: { colorScheme: "dark" },
   args: { type: "pose_estimate" },
   play: async () => {
@@ -88,9 +93,10 @@ export const PoseEstimatePosition = Object.assign(PublishClickToolTemplate.bind(
     await delay(100);
     await new Promise((resolve) => requestAnimationFrame(resolve));
   },
-});
+};
 
-export const PoseEstimateComplete = Object.assign(PublishClickToolTemplate.bind({}), {
+export const PoseEstimateComplete: StoryObj<{ type: PublishClickType }> = {
+  render: PublishClickToolTemplate,
   parameters: { colorScheme: "dark" },
   args: { type: "pose_estimate" },
   play: async () => {
@@ -110,10 +116,10 @@ export const PoseEstimateComplete = Object.assign(PublishClickToolTemplate.bind(
     await delay(100);
     await new Promise((resolve) => requestAnimationFrame(resolve));
   },
-});
+};
 
 function PublishClickToolTemplate({ type }: { type: PublishClickType }): JSX.Element {
-  const topics: Topic[] = [{ name: "/tf", datatype: "geometry_msgs/TransformStamped" }];
+  const topics: Topic[] = [{ name: "/tf", schemaName: "geometry_msgs/TransformStamped" }];
   const tf1: MessageEvent<TransformStamped> = {
     topic: "/tf",
     receiveTime: { sec: 10, nsec: 0 },
@@ -125,6 +131,7 @@ function PublishClickToolTemplate({ type }: { type: PublishClickType }): JSX.Ele
         rotation: QUAT_IDENTITY,
       },
     },
+    schemaName: "geometry_msgs/TransformStamped",
     sizeInBytes: 0,
   };
 
@@ -140,9 +147,9 @@ function PublishClickToolTemplate({ type }: { type: PublishClickType }): JSX.Ele
 
   return (
     <PanelSetup fixture={fixture}>
-      <ThreeDeeRender
+      <ThreeDeePanel
         overrideConfig={{
-          ...ThreeDeeRender.defaultConfig,
+          ...ThreeDeePanel.defaultConfig,
           followTf: "base_link",
           layers: {
             grid: { layerId: "foxglove.Grid" },

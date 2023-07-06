@@ -2,7 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import FileDownloadIcon from "@mdi/svg/svg/file-download-outline.svg";
+import { ArrowDownload20Filled } from "@fluentui/react-icons";
 import CloseIcon from "@mui/icons-material/Close";
 import DeleteOutline from "@mui/icons-material/DeleteOutline";
 import {
@@ -13,9 +13,10 @@ import {
   DialogActions,
   TextField,
   Typography,
-  styled as muiStyled,
+  outlinedInputClasses,
 } from "@mui/material";
 import { useCallback, useMemo, useState } from "react";
+import { makeStyles } from "tss-react/mui";
 
 import CopyButton from "@foxglove/studio-base/components/CopyButton";
 import HoverableIconButton from "@foxglove/studio-base/components/HoverableIconButton";
@@ -23,31 +24,32 @@ import Stack from "@foxglove/studio-base/components/Stack";
 import { downloadTextFile } from "@foxglove/studio-base/util/download";
 import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
-type Props = {
+export type ShareJsonModalProps = {
   onRequestClose: () => void;
   onChange: (value: unknown) => void;
   initialValue: unknown;
-  noun: string;
   title: string;
 };
 
-const StyledTextarea = muiStyled(TextField)(({ theme }) => ({
-  ".MuiOutlinedInput-root": {
-    backgroundColor: theme.palette.action.hover,
-    fontFamily: fonts.MONOSPACE,
-    maxHeight: "60vh",
-    overflowY: "auto",
-    padding: theme.spacing(0.25),
+const useStyles = makeStyles()((theme) => ({
+  textarea: {
+    [`.${outlinedInputClasses.root}`]: {
+      backgroundColor: theme.palette.action.hover,
+      fontFamily: fonts.MONOSPACE,
+      maxHeight: "60vh",
+      overflowY: "auto",
+      padding: theme.spacing(0.25),
+    },
   },
 }));
 
-export default function ShareJsonModal({
+export function ShareJsonModal({
   initialValue = {},
   onChange,
   onRequestClose,
-  noun,
   title,
-}: Props): JSX.Element {
+}: ShareJsonModalProps): JSX.Element {
+  const { classes } = useStyles();
   const [value, setValue] = useState(JSON.stringify(initialValue, undefined, 2) ?? "");
 
   const { decodedValue, error } = useMemo(() => {
@@ -67,6 +69,8 @@ export default function ShareJsonModal({
     downloadTextFile(value, "layout.json");
   }, [value]);
 
+  const getText = useCallback(() => value, [value]);
+
   return (
     <Dialog open onClose={onRequestClose} maxWidth="sm" fullWidth>
       <Stack
@@ -80,9 +84,6 @@ export default function ShareJsonModal({
           <Typography variant="h4" fontWeight={600} gutterBottom>
             {title}
           </Typography>
-          <Typography variant="body1" color="text.secondary">
-            {`Paste a new ${noun} to use it, or copy this one to share it:`}
-          </Typography>
         </Stack>
 
         <IconButton onClick={onRequestClose} edge="end">
@@ -90,7 +91,8 @@ export default function ShareJsonModal({
         </IconButton>
       </Stack>
       <DialogContent>
-        <StyledTextarea
+        <TextField
+          className={classes.textarea}
           fullWidth
           multiline
           rows={10}
@@ -101,6 +103,7 @@ export default function ShareJsonModal({
           helperText={
             error ? "The JSON provided is invalid." : " " // pass whitespace to prevent height from jumping
           }
+          inputProps={{ "data-testid": "share-json-input" }}
           FormHelperTextProps={{ variant: "standard" }}
           spellCheck={false}
         />
@@ -108,9 +111,9 @@ export default function ShareJsonModal({
       <DialogActions>
         <Stack direction="row" gap={1}>
           <IconButton onClick={handleDownload} title="Download" aria-label="Download">
-            <FileDownloadIcon />
+            <ArrowDownload20Filled />
           </IconButton>
-          <CopyButton color="default" value={value} />
+          <CopyButton color="default" getText={getText} />
           <HoverableIconButton
             activeColor="error"
             onClick={() => setValue("{}")}

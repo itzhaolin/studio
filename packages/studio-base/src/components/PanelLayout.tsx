@@ -11,30 +11,21 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { CircularProgress, Link, styled as muiStyled } from "@mui/material";
-import React, {
-  useCallback,
-  useMemo,
-  PropsWithChildren,
-  Suspense,
-  useRef,
-  LazyExoticComponent,
-  useEffect,
-} from "react";
+import { CircularProgress } from "@mui/material";
+import React, { PropsWithChildren, Suspense, useCallback, useMemo } from "react";
 import { useDrop } from "react-dnd";
 import {
-  MosaicWithoutDragDropContext,
-  MosaicWindow,
   MosaicDragType,
   MosaicNode,
   MosaicPath,
+  MosaicWindow,
+  MosaicWithoutDragDropContext,
 } from "react-mosaic-component";
-import "react-mosaic-component/react-mosaic-component.css";
+import { makeStyles } from "tss-react/mui";
 
 import { EmptyPanelLayout } from "@foxglove/studio-base/components/EmptyPanelLayout";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
-import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
-import Stack from "@foxglove/studio-base/components/Stack";
+import { useAppContext } from "@foxglove/studio-base/context/AppContext";
 import {
   LayoutState,
   useCurrentLayoutActions,
@@ -42,13 +33,16 @@ import {
   usePanelMosaicId,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { useExtensionCatalog } from "@foxglove/studio-base/context/ExtensionCatalogContext";
-import { PanelComponent, usePanelCatalog } from "@foxglove/studio-base/context/PanelCatalogContext";
-import { useWorkspace } from "@foxglove/studio-base/context/WorkspaceContext";
+import { usePanelCatalog } from "@foxglove/studio-base/context/PanelCatalogContext";
 import { MosaicDropResult, PanelConfig } from "@foxglove/studio-base/types/panels";
 import { getPanelIdForType, getPanelTypeFromId } from "@foxglove/studio-base/util/layout";
 
 import ErrorBoundary from "./ErrorBoundary";
 import { MosaicPathContext } from "./MosaicPathContext";
+import { PanelRemounter } from "./PanelRemounter";
+import { UnknownPanel } from "./UnknownPanel";
+
+import "react-mosaic-component/react-mosaic-component.css";
 
 type Props = {
   layout?: MosaicNode<string>;
@@ -60,21 +54,24 @@ type Props = {
 // place the dropped item as a sibling of the Tab), as well as the "root drop targets" inside the
 // nested mosaic (that would place the dropped item as a direct child of the Tab). Makes it easier
 // to drop panels into a tab layout.
-const HideTopLevelDropTargets = muiStyled("div")`
-  margin: 0;
+const useStyles = makeStyles()({
+  hideTopLevelDropTargets: {
+    margin: 0,
 
-  .mosaic-root + .drop-target-container {
-    display: none !important;
-  }
-  & > .mosaic-window > .drop-target-container {
-    display: none !important;
-  }
-`;
+    ".mosaic-root + .drop-target-container": {
+      display: "none !important",
+    },
+    "& > .mosaic-window > .drop-target-container": {
+      display: "none !important",
+    },
+  },
+});
 
 // This wrapper makes the tabId available in the drop result when something is dropped into a nested
 // drop target. This allows a panel to know which mosaic it was dropped in regardless of nesting
 // level.
 function TabMosaicWrapper({ tabId, children }: PropsWithChildren<{ tabId?: string }>) {
+  const { classes, cx } = useStyles();
   const [, drop] = useDrop<unknown, MosaicDropResult, never>({
     accept: MosaicDragType.WINDOW,
     drop: (_item, monitor) => {
@@ -88,9 +85,9 @@ function TabMosaicWrapper({ tabId, children }: PropsWithChildren<{ tabId?: strin
     },
   });
   return (
-    <HideTopLevelDropTargets className="mosaic-tile" ref={drop}>
+    <div className={cx(classes.hideTopLevelDropTargets, "mosaic-tile")} ref={drop}>
       {children}
-    </HideTopLevelDropTargets>
+    </div>
   );
 }
 
@@ -113,14 +110,13 @@ export function UnconnectedPanelLayout(props: Props): React.ReactElement {
 
   const panelCatalog = usePanelCatalog();
 
-  const panelComponentCache = useRef(
-    new Map<string, LazyExoticComponent<PanelComponent> | (() => JSX.Element)>(),
+  const panelComponents = useMemo(
+    () =>
+      new Map(
+        panelCatalog.getPanels().map((panelInfo) => [panelInfo.type, React.lazy(panelInfo.module)]),
+      ),
+    [panelCatalog],
   );
-
-  // Clear panel cache when panel catalog changes.
-  useEffect(() => {
-    panelComponentCache.current.clear();
-  }, [panelCatalog]);
 
   const renderTile = useCallback(
     (id: string | Record<string, never> | undefined, path: MosaicPath) => {
@@ -130,24 +126,13 @@ export function UnconnectedPanelLayout(props: Props): React.ReactElement {
       }
       const type = getPanelTypeFromId(id);
 
-      let Panel = panelComponentCache.current.get(type);
-
-      // cache the lazy created panel component to avoid making the component again
-      if (!Panel) {
-        const panelInfo = panelCatalog.getPanelByType(type);
+      let panel: JSX.Element;
+      const PanelComponent = panelComponents.get(type);
+      if (PanelComponent) {
+        panel = <PanelComponent childId={id} tabId={tabId} />;
+      } else {
         // If we haven't found a panel of the given type, render the panel selector
-        Panel = panelInfo
-          ? React.lazy(panelInfo.module)
-          : () => (
-              <Stack flex="auto" alignItems="center" justifyContent="center" data-testid={id}>
-                <PanelToolbar isUnknownPanel />
-                <EmptyState>Unknown panel type: {type}.</EmptyState>
-              </Stack>
-            );
-
-        if (panelInfo) {
-          panelComponentCache.current.set(type, Panel);
-        }
+        panel = <UnknownPanel childId={id} tabId={tabId} overrideConfig={{ type, id }} />;
       }
 
       const mosaicWindow = (
@@ -166,7 +151,9 @@ export function UnconnectedPanelLayout(props: Props): React.ReactElement {
             }
           >
             <MosaicPathContext.Provider value={path}>
-              <Panel childId={id} tabId={tabId} key={`${id}${tabId}`} />
+              <PanelRemounter id={id} tabId={tabId}>
+                {panel}
+              </PanelRemounter>
             </MosaicPathContext.Provider>
           </Suspense>
         </MosaicWindow>
@@ -176,7 +163,7 @@ export function UnconnectedPanelLayout(props: Props): React.ReactElement {
       }
       return mosaicWindow;
     },
-    [createTile, tabId, panelCatalog],
+    [panelComponents, createTile, tabId],
   );
 
   const bodyToRender = useMemo(
@@ -213,8 +200,8 @@ const selectedLayoutExistsSelector = (state: LayoutState) =>
 const selectedLayoutMosaicSelector = (state: LayoutState) => state.selectedLayout?.data?.layout;
 
 export default function PanelLayout(): JSX.Element {
+  const { layoutEmptyState } = useAppContext();
   const { changePanelLayout } = useCurrentLayoutActions();
-  const { openLayoutBrowser } = useWorkspace();
   const layoutExists = useCurrentLayoutSelector(selectedLayoutExistsSelector);
   const layoutLoading = useCurrentLayoutSelector(selectedLayoutLoadingSelector);
   const mosaicLayout = useCurrentLayoutSelector(selectedLayoutMosaicSelector);
@@ -241,12 +228,9 @@ export default function PanelLayout(): JSX.Element {
     return <LoadingState />;
   }
 
-  return (
-    <EmptyState>
-      <Link onClick={openLayoutBrowser} underline="hover">
-        Select a layout
-      </Link>{" "}
-      in the sidebar to get started!
-    </EmptyState>
-  );
+  if (layoutEmptyState) {
+    return layoutEmptyState;
+  }
+
+  return <></>;
 }

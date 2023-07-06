@@ -2,19 +2,19 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { ArgumentMap } from "eventemitter3";
+import EventEmitter from "eventemitter3";
 import { createContext, useContext, useEffect } from "react";
 
-import { Renderer, RendererEvents } from "./Renderer";
+import type { IRenderer, RendererEvents } from "./IRenderer";
 
-export const RendererContext = createContext<Renderer | undefined>(undefined);
+export const RendererContext = createContext<IRenderer | undefined>(undefined);
 
 /**
  * React hook to retrieve the Renderer instance registered with the
  * RendererContext. This will always return undefined from the ThreeDeeRender()
  * component since the context exists below ThreeDeeRender().
  */
-export function useRenderer(): Renderer | undefined {
+export function useRenderer(): IRenderer | undefined {
   const renderer = useContext(RendererContext);
   return renderer ?? undefined;
 }
@@ -30,8 +30,10 @@ export function useRenderer(): Renderer | undefined {
  */
 export function useRendererEvent<K extends keyof RendererEvents>(
   eventName: K,
-  listener: (...args: ArgumentMap<RendererEvents>[Extract<K, keyof RendererEvents>]) => void,
-  rendererInstance?: Renderer | ReactNull,
+  listener: (
+    ...args: EventEmitter.ArgumentMap<RendererEvents>[Extract<K, keyof RendererEvents>]
+  ) => void,
+  rendererInstance?: IRenderer | ReactNull,
 ): void {
   const usedRenderer = useRenderer();
   const renderer = rendererInstance ?? usedRenderer;

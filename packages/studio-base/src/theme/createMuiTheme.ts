@@ -4,19 +4,22 @@
 
 import { createTheme, Theme } from "@mui/material/styles";
 
+import { Language } from "@foxglove/studio-base/i18n";
+
 import muiComponents from "./muiComponents";
-import typography from "./muiTypography";
+import { muiTypography } from "./muiTypography";
 import * as palette from "./palette";
 
-export type ThemePreference = "dark" | "light";
+type ThemePreference = "dark" | "light";
 
-export default function createMuiTheme(
+export function createMuiTheme(
   themePreference: ThemePreference,
+  locale: Language | undefined,
 ): Theme & { name: ThemePreference } {
   const theme = createTheme({
     palette: palette[themePreference],
     shape: { borderRadius: 2 },
-    typography,
+    typography: muiTypography({ locale }),
   });
 
   // add name for storybook

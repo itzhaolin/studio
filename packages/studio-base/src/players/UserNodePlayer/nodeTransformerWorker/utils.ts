@@ -17,7 +17,7 @@ import { DiagnosticSeverity, Diagnostic } from "@foxglove/studio-base/players/Us
 
 const mapCategoryToDiagnosticSeverity = (
   category: ts.DiagnosticCategory,
-): typeof DiagnosticSeverity[keyof typeof DiagnosticSeverity] => {
+): (typeof DiagnosticSeverity)[keyof typeof DiagnosticSeverity] => {
   switch (category) {
     case ts.DiagnosticCategory.Error:
       return DiagnosticSeverity.Error;
@@ -89,6 +89,6 @@ function flattenDiagnosticMessageText(
 // https://www.typescriptlang.org/docs/handbook/compiler-options.html
 export const baseCompilerOptions = {
   strict: true,
-  target: ts.ScriptTarget.ES2020,
+  target: ts.ScriptTarget.ES2022,
   module: ts.ModuleKind.CommonJS,
 };

@@ -1,6 +1,6 @@
 ---
-name: Bug
-about: Report broken functionality
+name: "🐞 Bug report"
+about: Report broken functionality or incorrect documentation
 labels: "bug"
 ---
 
@@ -8,15 +8,11 @@ labels: "bug"
 
 
 - Version:
-- OS:
+- Platform:
 - Data source (e.g. bag file, mcap file, rosbridge, ROS 1/2 native):
-- ROS distro (if applicable):
 
 **Steps To Reproduce**
-<!--- Include code, screenshots, and an example data source (i.e. a `.bag` file), if relevant. -->
+<!--- Include the minimum possible code, example data, or screenshots to reproduce the problem. -->
 
 
 **Expected Behavior**
-
-
-**Actual Behavior**

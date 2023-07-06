@@ -4,7 +4,6 @@
 
 import { ReactNode, useState } from "react";
 import { AsyncState } from "react-use/lib/useAsyncFn";
-import { createSelector } from "reselect";
 import { createStore } from "zustand";
 
 import {
@@ -21,12 +20,17 @@ function createEventsStore() {
     events: { loading: false, value: NO_EVENTS },
     filter: "",
     selectedEventId: undefined,
+    eventsSupported: false,
+    deviceId: undefined,
 
     refreshEvents: () => set((old) => ({ eventFetchCount: old.eventFetchCount + 1 })),
     selectEvent: (id: undefined | string) => set({ selectedEventId: id }),
     setEvents: (events: AsyncState<TimelinePositionedEvent[]>) =>
-      set({ events, filter: "", selectedEventId: undefined }),
+      set({ events, selectedEventId: undefined }),
     setFilter: (filter: string) => set({ filter }),
+    // eslint-disable-next-line @foxglove/no-boolean-parameters
+    setEventsSupported: (eventsSupported: boolean) => set({ eventsSupported }),
+    setDeviceId: (deviceId: string | undefined) => set({ deviceId }),
   }));
 }
 
@@ -35,30 +39,3 @@ export default function EventsProvider({ children }: { children?: ReactNode }): 
 
   return <EventsContext.Provider value={store}>{children}</EventsContext.Provider>;
 }
-
-const selectFilteredEvents = createSelector(
-  (store: EventsStore) => store.events.value,
-  (store: EventsStore) => store.filter,
-  (events, filter) => {
-    if (!events) {
-      return NO_EVENTS;
-    }
-
-    if (filter.length === 0) {
-      return events;
-    }
-
-    const lowFilter = filter.toLowerCase();
-
-    return events.filter((event) =>
-      Object.entries(event.event.metadata).some(
-        ([key, value]) =>
-          key.toLowerCase().includes(lowFilter) || value.toLowerCase().includes(lowFilter),
-      ),
-    );
-  },
-);
-
-export const EventsSelectors = {
-  selectFilteredEvents,
-};

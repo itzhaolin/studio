@@ -19,7 +19,12 @@ import { MessagePipelineProvider } from "@foxglove/studio-base/components/Messag
 import FakePlayer from "@foxglove/studio-base/components/MessagePipeline/FakePlayer";
 import MockMessagePipelineProvider from "@foxglove/studio-base/components/MessagePipeline/MockMessagePipelineProvider";
 import AppConfigurationContext from "@foxglove/studio-base/context/AppConfigurationContext";
-import { Player, PlayerStateActiveData, Topic } from "@foxglove/studio-base/players/types";
+import {
+  Player,
+  PlayerStateActiveData,
+  Topic,
+  MessageEvent,
+} from "@foxglove/studio-base/players/types";
 import { makeMockAppConfiguration } from "@foxglove/studio-base/util/makeMockAppConfiguration";
 
 import * as PanelAPI from ".";
@@ -48,28 +53,33 @@ describe("useMessageReducer", () => {
   });
 
   it("requires exactly one 'add' callback", () => {
-    const restore = jest.fn().mockReturnValue(1);
-    const addMessage = jest.fn();
-    const addMessages = jest.fn();
-    const { result: result1 } = renderHook(() =>
-      PanelAPI.useMessageReducer({ topics: ["/foo"], restore }),
-    );
-    expect(result1.error).toEqual(
-      new Error("useMessageReducer must be provided with exactly one of addMessage or addMessages"),
-    );
-    const { result: result2 } = renderHook(() =>
-      PanelAPI.useMessageReducer({ topics: ["/foo"], restore, addMessage, addMessages }),
-    );
-    expect(result2.error).toEqual(
-      new Error("useMessageReducer must be provided with exactly one of addMessage or addMessages"),
-    );
+    expect(React.version).toMatch(/^17\./);
+    // Disabled due to Jest being unable to catch the exception without failing the test (https://github.com/foxglove/studio/pull/5152)
+    // Re-enable and switch to expect.toThrow when upgrading to React 18 (https://github.com/foxglove/studio/commit/5f50ba279bfed3d5b16db5478594f945b0b6dcaf#diff-dc7f35671f5375e2127b759c5edfa9a81eea1534ad39eb4c6133895c6142331f)
+
+    // const restore = jest.fn().mockReturnValue(1);
+    // const addMessage = jest.fn();
+    // const addMessages = jest.fn();
+    // const { result: result1 } = renderHook(() =>
+    //   PanelAPI.useMessageReducer({ topics: ["/foo"], restore }),
+    // );
+    // expect(result1.error).toEqual(
+    //   new Error("useMessageReducer must be provided with exactly one of addMessage or addMessages"),
+    // );
+    // const { result: result2 } = renderHook(() =>
+    //   PanelAPI.useMessageReducer({ topics: ["/foo"], restore, addMessage, addMessages }),
+    // );
+    // expect(result2.error).toEqual(
+    //   new Error("useMessageReducer must be provided with exactly one of addMessage or addMessages"),
+    // );
   });
 
   it("calls restore to initialize and addMessage for initial messages", async () => {
-    const message = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
 
@@ -95,10 +105,11 @@ describe("useMessageReducer", () => {
   });
 
   it("calls restore to initialize and addMessages for initial messages", async () => {
-    const message = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
 
@@ -126,23 +137,25 @@ describe("useMessageReducer", () => {
   });
 
   it("calls addMessage for messages added later", async () => {
-    const message1 = {
+    const message1: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
-    const message2 = {
+    const message2: MessageEvent = {
       topic: "/bar",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 3 },
+      schemaName: "bar",
       sizeInBytes: 0,
     };
 
     const restore = jest.fn().mockReturnValue(1);
     const addMessage = jest.fn().mockImplementation((_, msg) => msg.message.value);
 
-    let messages: typeof message1[] = [];
+    let messages: (typeof message1)[] = [];
     const { result, rerender } = renderHook(
       ({ topics }) =>
         PanelAPI.useMessageReducer({
@@ -184,22 +197,25 @@ describe("useMessageReducer", () => {
   });
 
   it("calls addMessages for messages added later", async () => {
-    const message1 = {
+    const message1: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
-    const message2 = {
+    const message2: MessageEvent = {
       topic: "/bar",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 3 },
+      schemaName: "bar",
       sizeInBytes: 0,
     };
-    const message3 = {
+    const message3: MessageEvent = {
       topic: "/bar",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 4 },
+      schemaName: "bar",
       sizeInBytes: 0,
     };
 
@@ -208,7 +224,7 @@ describe("useMessageReducer", () => {
       .fn()
       .mockImplementation((_, msgs) => msgs[msgs.length - 1].message.value);
 
-    let messages: typeof message1[] = [];
+    let messages: (typeof message1)[] = [];
     const { result, rerender } = renderHook(
       ({ topics }) =>
         PanelAPI.useMessageReducer({
@@ -294,17 +310,18 @@ describe("useMessageReducer", () => {
   });
 
   it("clears everything on seek", () => {
-    const message1 = {
+    const message1: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
 
     const restore = jest.fn().mockReturnValue(1);
     const addMessage = jest.fn().mockImplementation((_, msg) => msg.message.value);
 
-    let messages: typeof message1[] = [];
+    let messages: (typeof message1)[] = [];
     let activeData: Partial<PlayerStateActiveData> = {};
     const { result, rerender } = renderHook(
       () => PanelAPI.useMessageReducer({ topics: ["/foo"], restore, addMessage }),
@@ -354,16 +371,18 @@ describe("useMessageReducer", () => {
     restore.mockReturnValue(0);
     addMessage.mockImplementation((_, msg) => msg.message.value);
 
-    const message1 = {
+    const message1: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 1 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
-    const message2 = {
+    const message2: MessageEvent = {
       topic: "/bar",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "bar",
       sizeInBytes: 0,
     };
 
@@ -402,8 +421,8 @@ describe("useMessageReducer", () => {
             speed: 0.2,
             lastSeekTime: 1234,
             topics: [
-              { name: "/foo", datatype: "foo" },
-              { name: "/bar", datatype: "foo" },
+              { name: "/foo", schemaName: "foo" },
+              { name: "/bar", schemaName: "foo" },
             ],
             topicStats: new Map(),
             datatypes: new Map(
@@ -441,8 +460,8 @@ describe("useMessageReducer", () => {
             speed: 0.2,
             lastSeekTime: 1234,
             topics: [
-              { name: "/foo", datatype: "foo" },
-              { name: "/bar", datatype: "foo" },
+              { name: "/foo", schemaName: "foo" },
+              { name: "/bar", schemaName: "foo" },
             ],
             topicStats: new Map(),
             datatypes: new Map(
@@ -465,10 +484,11 @@ describe("useMessageReducer", () => {
   });
 
   it("doesn't re-render when player topics or other playerState changes", async () => {
-    const message = {
+    const message: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
 
@@ -497,7 +517,7 @@ describe("useMessageReducer", () => {
     expect(addMessage.mock.calls).toEqual([[1, message]]);
     expect(result.current).toEqual(2);
 
-    topics = [{ name: "/bar", datatype: "Bar" }];
+    topics = [{ name: "/bar", schemaName: "Bar" }];
     rerender();
     capabilities = ["some_capability"];
     rerender();
@@ -536,10 +556,11 @@ describe("useMessageReducer", () => {
   });
 
   it("restore called when addMessages changes", async () => {
-    const message1 = {
+    const message1: MessageEvent = {
       topic: "/foo",
       receiveTime: { sec: 0, nsec: 0 },
       message: { value: 2 },
+      schemaName: "foo",
       sizeInBytes: 0,
     };
 

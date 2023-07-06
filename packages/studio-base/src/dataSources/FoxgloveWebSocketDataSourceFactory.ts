@@ -15,8 +15,21 @@ export default class FoxgloveWebSocketDataSourceFactory implements IDataSourceFa
   public displayName = "Foxglove WebSocket";
   public iconName: IDataSourceFactory["iconName"] = "Flow";
   public description =
-    "Connect live to your custom data via an encoding-agnostic WebSocket connection. Using this data source usualy requires writing a custom server.";
-  public docsLink = "https://foxglove.dev/docs/studio/connection/foxglove-websocket";
+    "Connect to a ROS 1, ROS 2, or custom system using the Foxglove WebSocket protocol. For ROS systems, be sure to first install the foxglove_bridge ROS package.";
+  public docsLinks = [
+    {
+      label: "ROS 1",
+      url: "https://foxglove.dev/docs/studio/connection/ros1#foxglove-websocket",
+    },
+    {
+      label: "ROS 2",
+      url: "https://foxglove.dev/docs/studio/connection/ros2#foxglove-websocket",
+    },
+    {
+      label: "custom data",
+      url: "https://foxglove.dev/docs/studio/connection/custom#foxglove-websocket",
+    },
+  ];
 
   public formConfig = {
     fields: [
@@ -40,7 +53,7 @@ export default class FoxgloveWebSocketDataSourceFactory implements IDataSourceFa
   };
 
   public initialize(args: DataSourceFactoryInitializeArgs): Player | undefined {
-    const url = args.url;
+    const url = args.params?.url;
     if (!url) {
       return;
     }

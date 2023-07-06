@@ -2,17 +2,15 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import protobufjs from "protobufjs";
-import { FileDescriptorSet, IFileDescriptorSet } from "protobufjs/ext/descriptor";
-
-import { parse as parseMessageDefinition, RosMsgDefinition } from "@foxglove/rosmsg";
-import { LazyMessageReader } from "@foxglove/rosmsg-serialization";
+import { MessageDefinition } from "@foxglove/message-definition";
+import { parse as parseMessageDefinition, parseRos2idl } from "@foxglove/rosmsg";
+import { MessageReader } from "@foxglove/rosmsg-serialization";
 import { MessageReader as ROS2MessageReader } from "@foxglove/rosmsg2-serialization";
 
 import { parseFlatbufferSchema } from "./parseFlatbufferSchema";
 import { parseJsonSchema } from "./parseJsonSchema";
-import { protobufDefinitionsToDatatypes, stripLeadingDot } from "./protobufDefinitionsToDatatypes";
-import { RosDatatypes } from "./types";
+import { parseProtobufSchema } from "./parseProtobufSchema";
+import { MessageDefinitionMap } from "./types";
 
 type Channel = {
   messageEncoding: string;
@@ -20,16 +18,15 @@ type Channel = {
 };
 
 export type ParsedChannel = {
-  fullSchemaName: string;
-  deserializer: (data: ArrayBufferView) => unknown;
-  datatypes: RosDatatypes;
+  deserialize: (data: ArrayBufferView) => unknown;
+  datatypes: MessageDefinitionMap;
 };
 
 function parsedDefinitionsToDatatypes(
-  parsedDefinitions: RosMsgDefinition[],
+  parsedDefinitions: MessageDefinition[],
   rootName: string,
-): RosDatatypes {
-  const datatypes: RosDatatypes = new Map();
+): MessageDefinitionMap {
+  const datatypes: MessageDefinitionMap = new Map();
   parsedDefinitions.forEach(({ name, definitions }, index) => {
     if (index === 0) {
       datatypes.set(rootName, { name: rootName, definitions });
@@ -50,35 +47,33 @@ function parsedDefinitionsToDatatypes(
  */
 export function parseChannel(channel: Channel): ParsedChannel {
   if (channel.messageEncoding === "json") {
-    if (channel.schema?.encoding !== "jsonschema") {
+    if (channel.schema != undefined && channel.schema.encoding !== "jsonschema") {
       throw new Error(
-        `Message encoding ${channel.messageEncoding} with ${
-          channel.schema == undefined
-            ? "no encoding"
-            : `schema encoding '${channel.schema.encoding}'`
-        } is not supported (expected jsonschema)`,
+        `Message encoding ${channel.messageEncoding} with schema encoding '${channel.schema.encoding}' is not supported (expected jsonschema or no schema)`,
       );
     }
     const textDecoder = new TextDecoder();
-    const schema =
-      channel.schema.data.length > 0
-        ? JSON.parse(textDecoder.decode(channel.schema.data))
-        : undefined;
-    let datatypes: RosDatatypes = new Map();
-    let deserializer = (data: ArrayBufferView) => JSON.parse(textDecoder.decode(data));
-    if (schema != undefined) {
-      if (typeof schema !== "object") {
-        throw new Error(`Invalid schema, expected JSON object, got ${typeof schema}`);
+    let datatypes: MessageDefinitionMap = new Map();
+    let deserialize = (data: ArrayBufferView) => JSON.parse(textDecoder.decode(data));
+    if (channel.schema != undefined) {
+      const schema =
+        channel.schema.data.length > 0
+          ? JSON.parse(textDecoder.decode(channel.schema.data))
+          : undefined;
+      if (schema != undefined) {
+        if (typeof schema !== "object") {
+          throw new Error(`Invalid schema, expected JSON object, got ${typeof schema}`);
+        }
+        const { datatypes: parsedDatatypes, postprocessValue } = parseJsonSchema(
+          schema as Record<string, unknown>,
+          channel.schema.name,
+        );
+        datatypes = parsedDatatypes;
+        deserialize = (data) =>
+          postprocessValue(JSON.parse(textDecoder.decode(data)) as Record<string, unknown>);
       }
-      const { datatypes: parsedDatatypes, postprocessValue } = parseJsonSchema(
-        schema as Record<string, unknown>,
-        channel.schema.name,
-      );
-      datatypes = parsedDatatypes;
-      deserializer = (data) =>
-        postprocessValue(JSON.parse(textDecoder.decode(data)) as Record<string, unknown>);
     }
-    return { fullSchemaName: channel.schema.name, deserializer, datatypes };
+    return { deserialize, datatypes };
   }
 
   if (channel.messageEncoding === "flatbuffer") {
@@ -104,46 +99,7 @@ export function parseChannel(channel: Channel): ParsedChannel {
         } is not supported (expected protobuf)`,
       );
     }
-    const descriptorSet = FileDescriptorSet.decode(channel.schema.data);
-
-    // Modify the definition of google.protobuf.Timestamp so it gets parsed as {sec, nsec},
-    // compatible with the rest of Studio.
-    for (const file of (descriptorSet as unknown as IFileDescriptorSet).file) {
-      if (file.package === "google.protobuf") {
-        for (const message of file.messageType ?? []) {
-          if (message.name === "Timestamp" || message.name === "Duration") {
-            for (const field of message.field ?? []) {
-              if (field.name === "seconds") {
-                field.name = "sec";
-              } else if (field.name === "nanos") {
-                field.name = "nsec";
-              }
-            }
-          }
-        }
-      }
-    }
-
-    const root = protobufjs.Root.fromDescriptor(descriptorSet);
-    root.resolveAll();
-    const type = root.lookupType(channel.schema.name);
-
-    const deserializer = (data: ArrayBufferView) => {
-      return type.toObject(
-        type.decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength)),
-        { defaults: true },
-      );
-    };
-
-    const datatypes: RosDatatypes = new Map();
-    protobufDefinitionsToDatatypes(datatypes, type);
-
-    return {
-      // fullName is a fully qualified name but includes a leading dot. Remove the leading dot.
-      fullSchemaName: stripLeadingDot(type.fullName),
-      deserializer,
-      datatypes,
-    };
+    return parseProtobufSchema(channel.schema.name, channel.schema.data);
   }
 
   if (channel.messageEncoding === "ros1") {
@@ -158,39 +114,34 @@ export function parseChannel(channel: Channel): ParsedChannel {
     }
     const schema = new TextDecoder().decode(channel.schema.data);
     const parsedDefinitions = parseMessageDefinition(schema);
-    const reader = new LazyMessageReader(parsedDefinitions);
+    const reader = new MessageReader(parsedDefinitions);
     return {
-      fullSchemaName: channel.schema.name,
       datatypes: parsedDefinitionsToDatatypes(parsedDefinitions, channel.schema.name),
-      deserializer: (data) => {
-        const size = reader.size(data);
-        if (size > data.byteLength) {
-          throw new Error(
-            `Buffer not large enough: expected ${size} bytes, got ${data.byteLength}`,
-          );
-        }
-        return reader.readMessage(data);
-      },
+      deserialize: (data) => reader.readMessage(data),
     };
   }
 
   if (channel.messageEncoding === "cdr") {
-    if (channel.schema?.encoding !== "ros2msg") {
+    if (channel.schema?.encoding !== "ros2msg" && channel.schema?.encoding !== "ros2idl") {
       throw new Error(
         `Message encoding ${channel.messageEncoding} with ${
           channel.schema == undefined
             ? "no encoding"
             : `schema encoding '${channel.schema.encoding}'`
-        } is not supported (expected ros2msg)`,
+        } is not supported (expected "ros2msg" or "ros2idl")`,
       );
     }
     const schema = new TextDecoder().decode(channel.schema.data);
-    const parsedDefinitions = parseMessageDefinition(schema, { ros2: true });
+    const isIdl = channel.schema.encoding === "ros2idl";
+
+    const parsedDefinitions = isIdl
+      ? parseRos2idl(schema)
+      : parseMessageDefinition(schema, { ros2: true });
+
     const reader = new ROS2MessageReader(parsedDefinitions);
     return {
-      fullSchemaName: channel.schema.name,
       datatypes: parsedDefinitionsToDatatypes(parsedDefinitions, channel.schema.name),
-      deserializer: (data) => reader.readMessage(data),
+      deserialize: (data) => reader.readMessage(data),
     };
   }
 

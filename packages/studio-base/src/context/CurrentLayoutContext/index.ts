@@ -5,19 +5,19 @@
 import { createContext, useCallback, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { getLeaves } from "react-mosaic-component";
 
-import { useShallowMemo } from "@foxglove/hooks";
+import {
+  useShallowMemo,
+  selectWithUnstableIdentityWarning,
+  useGuaranteedContext,
+} from "@foxglove/hooks";
 import Logger from "@foxglove/log";
 import { VariableValue } from "@foxglove/studio";
-import { selectWithUnstableIdentityWarning } from "@foxglove/studio-base/hooks/selectWithUnstableIdentityWarning";
-import useGuaranteedContext from "@foxglove/studio-base/hooks/useGuaranteedContext";
 import useShouldNotChangeOften from "@foxglove/studio-base/hooks/useShouldNotChangeOften";
-import { LinkedGlobalVariables } from "@foxglove/studio-base/panels/ThreeDimensionalViz/Interactions/useLinkedGlobalVariables";
 import toggleSelectedPanel from "@foxglove/studio-base/providers/CurrentLayoutProvider/toggleSelectedPanel";
-import { LayoutID } from "@foxglove/studio-base/services/ILayoutStorage";
 import { PanelConfig, PlaybackConfig, UserNodes } from "@foxglove/studio-base/types/panels";
 
 import {
-  PanelsState,
+  LayoutData,
   AddPanelPayload,
   ChangePanelLayoutPayload,
   ClosePanelPayload,
@@ -31,12 +31,16 @@ import {
   SwapPanelPayload,
 } from "./actions";
 
+export type LayoutID = string & { __brand: "LayoutID" };
+
 export type LayoutState = Readonly<{
   selectedLayout:
     | {
         id: LayoutID;
         loading?: boolean;
-        data: PanelsState | undefined;
+        data: LayoutData | undefined;
+        name?: string;
+        edited?: boolean;
       }
     | undefined;
 }>;
@@ -78,7 +82,6 @@ export interface ICurrentLayout {
     overwriteGlobalVariables: (payload: Record<string, VariableValue>) => void;
     setGlobalVariables: (payload: Record<string, VariableValue>) => void;
     setUserNodes: (payload: Partial<UserNodes>) => void;
-    setLinkedGlobalVariables: (payload: LinkedGlobalVariables) => void;
     setPlaybackConfig: (payload: Partial<PlaybackConfig>) => void;
     closePanel: (payload: ClosePanelPayload) => void;
     splitPanel: (payload: SplitPanelPayload) => void;

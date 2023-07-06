@@ -31,9 +31,7 @@ class TestSource implements IIterableSource {
     _args: MessageIteratorArgs,
   ): AsyncIterableIterator<Readonly<IteratorResult>> {}
 
-  public async getBackfillMessages(
-    _args: GetBackfillMessagesArgs,
-  ): Promise<MessageEvent<unknown>[]> {
+  public async getBackfillMessages(_args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
     return [];
   }
 }
@@ -58,14 +56,14 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 8; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: 0, nsec: i * 1e8 },
             message: undefined,
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -81,13 +79,13 @@ describe("CachingIterableSource", () => {
         await expect(iterResult).resolves.toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: 0, nsec: i * 1e8 },
               message: undefined,
               sizeInBytes: 0,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -120,13 +118,13 @@ describe("CachingIterableSource", () => {
         await expect(iterResult).resolves.toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: 0, nsec: i * 1e8 },
               message: undefined,
               sizeInBytes: 0,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -152,14 +150,14 @@ describe("CachingIterableSource", () => {
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 0, nsec: 1 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
     };
 
@@ -196,14 +194,14 @@ describe("CachingIterableSource", () => {
         _args: MessageIteratorArgs,
       ): AsyncIterableIterator<Readonly<IteratorResult>> {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: 5, nsec: 0 },
             message: undefined,
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       };
 
@@ -218,13 +216,13 @@ describe("CachingIterableSource", () => {
         expect(iterResult).toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: 5, nsec: 0 },
               message: undefined,
               sizeInBytes: 0,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -246,14 +244,14 @@ describe("CachingIterableSource", () => {
         _args: MessageIteratorArgs,
       ): AsyncIterableIterator<Readonly<IteratorResult>> {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: 0, nsec: 0 },
             message: undefined,
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       };
 
@@ -268,13 +266,13 @@ describe("CachingIterableSource", () => {
         expect(iterResult).toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: 0, nsec: 0 },
               message: undefined,
               sizeInBytes: 0,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -285,13 +283,13 @@ describe("CachingIterableSource", () => {
         expect(iterResult).toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: 5, nsec: 0 },
               message: undefined,
               sizeInBytes: 0,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -321,36 +319,36 @@ describe("CachingIterableSource", () => {
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 0, nsec: 0 },
           message: undefined,
           sizeInBytes: 101,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
 
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 5, nsec: 1 },
           message: undefined,
           sizeInBytes: 101,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
 
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 10, nsec: 0 },
           message: undefined,
           sizeInBytes: 101,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
     };
 
@@ -407,14 +405,14 @@ describe("CachingIterableSource", () => {
       args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 3, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
 
       if ((args.end?.sec ?? 100) < 6) {
@@ -422,14 +420,14 @@ describe("CachingIterableSource", () => {
       }
 
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 6, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
     };
 
@@ -441,14 +439,14 @@ describe("CachingIterableSource", () => {
     {
       const res = await messageIterator.next();
       expect(res.value).toEqual({
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 3, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       });
     }
 
@@ -468,25 +466,25 @@ describe("CachingIterableSource", () => {
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 3, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
 
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 6, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
     };
 
@@ -508,14 +506,14 @@ describe("CachingIterableSource", () => {
     {
       const res = await messageIterator.next();
       expect(res.value).toEqual({
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 3, nsec: 0 },
           message: undefined,
           sizeInBytes: 0,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       });
     }
 
@@ -536,14 +534,14 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 8; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: 0, nsec: i * 1e8 },
             message: undefined,
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -573,7 +571,13 @@ describe("CachingIterableSource", () => {
       time: { sec: 2, nsec: 0 },
     });
     expect(backfill).toEqual([
-      { message: undefined, receiveTime: { sec: 0, nsec: 700000000 }, sizeInBytes: 0, topic: "a" },
+      {
+        message: undefined,
+        receiveTime: { sec: 0, nsec: 700000000 },
+        sizeInBytes: 0,
+        topic: "a",
+        schemaName: "foo",
+      },
     ]);
   });
 
@@ -587,24 +591,24 @@ describe("CachingIterableSource", () => {
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "a",
           receiveTime: { sec: 1, nsec: 0 },
           message: undefined,
           sizeInBytes: 101,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
       yield {
+        type: "message-event",
         msgEvent: {
           topic: "b",
           receiveTime: { sec: 2, nsec: 0 },
           message: undefined,
           sizeInBytes: 101,
+          schemaName: "foo",
         },
-        problem: undefined,
-        connectionId: undefined,
       };
     };
 
@@ -633,8 +637,20 @@ describe("CachingIterableSource", () => {
       time: { sec: 2, nsec: 500 },
     });
     expect(backfill).toEqual([
-      { message: undefined, receiveTime: { sec: 2, nsec: 0 }, sizeInBytes: 101, topic: "b" },
-      { message: undefined, receiveTime: { sec: 1, nsec: 0 }, sizeInBytes: 101, topic: "a" },
+      {
+        message: undefined,
+        receiveTime: { sec: 2, nsec: 0 },
+        sizeInBytes: 101,
+        topic: "b",
+        schemaName: "foo",
+      },
+      {
+        message: undefined,
+        receiveTime: { sec: 1, nsec: 0 },
+        sizeInBytes: 101,
+        topic: "a",
+        schemaName: "foo",
+      },
     ]);
   });
 
@@ -652,14 +668,14 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 8; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: i, nsec: 0 },
             message: undefined,
             sizeInBytes: 101,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -692,14 +708,14 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 10; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: i, nsec: 0 },
             message: undefined,
             sizeInBytes: 100,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -741,14 +757,14 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 10; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: Math.floor(i / 3), nsec: 0 },
             message: { value: i },
             sizeInBytes: 50,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -764,13 +780,13 @@ describe("CachingIterableSource", () => {
         await expect(iterResult).resolves.toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: Math.floor(i / 3), nsec: 0 },
               message: { value: i },
               sizeInBytes: 50,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -803,13 +819,13 @@ describe("CachingIterableSource", () => {
         await expect(iterResult).resolves.toEqual({
           done: false,
           value: {
-            problem: undefined,
-            connectionId: undefined,
+            type: "message-event",
             msgEvent: {
               receiveTime: { sec: Math.floor(i / 3), nsec: 0 },
               message: { value: i },
               sizeInBytes: 50,
               topic: "a",
+              schemaName: "foo",
             },
           },
         });
@@ -836,24 +852,25 @@ describe("CachingIterableSource", () => {
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
       for (let i = 0; i < 10; ++i) {
         yield {
+          type: "message-event",
           msgEvent: {
             topic: "a",
             receiveTime: { sec: Math.floor(i / 3), nsec: 0 },
             message: { value: i },
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
         yield {
+          type: "message-event",
+
           msgEvent: {
             topic: "b",
             receiveTime: { sec: Math.floor(i / 3), nsec: 0 },
             message: { value: i },
             sizeInBytes: 0,
+            schemaName: "foo",
           },
-          problem: undefined,
-          connectionId: undefined,
         };
       }
     };
@@ -884,8 +901,20 @@ describe("CachingIterableSource", () => {
     });
 
     expect(backfill).toEqual([
-      { message: { value: 8 }, receiveTime: { sec: 2, nsec: 0 }, sizeInBytes: 0, topic: "b" },
-      { message: { value: 8 }, receiveTime: { sec: 2, nsec: 0 }, sizeInBytes: 0, topic: "a" },
+      {
+        message: { value: 8 },
+        receiveTime: { sec: 2, nsec: 0 },
+        sizeInBytes: 0,
+        topic: "b",
+        schemaName: "foo",
+      },
+      {
+        message: { value: 8 },
+        receiveTime: { sec: 2, nsec: 0 },
+        sizeInBytes: 0,
+        topic: "a",
+        schemaName: "foo",
+      },
     ]);
   });
 });

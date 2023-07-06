@@ -53,7 +53,7 @@ const baseNodeData: NodeData = {
   sourceFile: undefined,
   typeChecker: undefined,
   rosLib: generateRosLib({
-    topics: [{ name: "/some_topic", datatype: "std_msgs/ColorRGBA" }],
+    topics: [{ name: "/some_topic", schemaName: "std_msgs/ColorRGBA" }],
     datatypes: exampleDatatypes,
   }),
   typesLib: generateEmptyTypesLib(),
@@ -169,7 +169,7 @@ describe("pipeline", () => {
     ])("returns a  error when an input topic is not yet available", (inputTopics, topics) => {
       const { diagnostics } = validateInputTopics(
         { ...baseNodeData, inputTopics },
-        topics.map((name) => ({ name, datatype: "" })),
+        topics.map((name) => ({ name, schemaName: "" })),
       );
       expect(diagnostics.length).toEqual(1);
       expect(diagnostics[0]?.severity).toEqual(DiagnosticSeverity.Error);
@@ -303,7 +303,7 @@ describe("pipeline", () => {
         `;
 
         const rosLib = generateRosLib({
-          topics: [{ name: "/tick_information", datatype: "std_msgs/TickInfo" }],
+          topics: [{ name: "/tick_information", schemaName: "std_msgs/TickInfo" }],
           datatypes: new Map(
             Object.entries({
               "std_msgs/TickInfo": tickInfoDatatype,
@@ -399,7 +399,8 @@ describe("pipeline", () => {
       sourceCode: string;
       description: string;
       datatypes?: RosDatatypes;
-      error?: typeof ErrorCodes.DatatypeExtraction[keyof typeof ErrorCodes.DatatypeExtraction];
+      error?: (typeof ErrorCodes.DatatypeExtraction)[keyof typeof ErrorCodes.DatatypeExtraction];
+      errorMessage?: string;
       outputDatatype?: string;
       only?: boolean;
       /* Debugging helper */
@@ -1563,6 +1564,20 @@ describe("pipeline", () => {
           };`,
         error: ErrorCodes.DatatypeExtraction.BAD_TYPE_RETURN,
       },
+      {
+        description: "Generic type that's just too difficult :(",
+        sourceCode: `
+          import { Input, Message } from "./types";
+          type Output = {
+            foo: Message<"Foo">;
+          };
+          export default (msg: any): Output => {
+            throw new Error();
+          };`,
+        datatypes: new Map([["Foo", { definitions: [] }]]),
+        errorMessage: "Unsupported type for member 'foo'.",
+        error: ErrorCodes.DatatypeExtraction.BAD_TYPE_RETURN,
+      },
     ];
 
     describe("extracts datatypes from the return type of the publisher", () => {
@@ -1575,7 +1590,15 @@ describe("pipeline", () => {
         typeof skip === "boolean" ? !skip : true,
       );
       filteredTestCases.forEach(
-        ({ description, sourceCode, datatypes = new Map(), error, outputDatatype, rosLib }) => {
+        ({
+          description,
+          sourceCode,
+          datatypes = new Map(),
+          error,
+          errorMessage,
+          outputDatatype,
+          rosLib,
+        }) => {
           it(`${error != undefined ? "Expected Error: " : ""}${description}`, () => {
             const typesLib = generateTypesLib({ topics: [], datatypes });
             const inputNodeData: NodeData = {
@@ -1592,6 +1615,9 @@ describe("pipeline", () => {
               expect(nodeData.datatypes).toEqual(datatypes);
             } else {
               expect(nodeData.diagnostics.map(({ code }) => code)).toEqual([error]);
+            }
+            if (errorMessage != undefined) {
+              expect(nodeData.diagnostics.map(({ message }) => message)).toEqual([errorMessage]);
             }
           });
         },

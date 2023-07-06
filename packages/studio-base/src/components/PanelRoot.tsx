@@ -7,6 +7,8 @@ import { forwardRef, HTMLAttributes, PropsWithChildren } from "react";
 import { TransitionStatus } from "react-transition-group";
 import { makeStyles } from "tss-react/mui";
 
+import { APP_BAR_HEIGHT } from "@foxglove/studio-base/components/AppBar/constants";
+
 export const PANEL_ROOT_CLASS_NAME = "FoxglovePanelRoot-root";
 
 type PanelRootProps = {
@@ -67,10 +69,10 @@ export const usePanelRootStyles = makeStyles<
     entered: {
       borderWidth: 4,
       position: "fixed",
-      top: 0,
+      top: APP_BAR_HEIGHT, // offset by app bar height
       left: 0,
       right: 0,
-      bottom: 50, // match PlaybackBar height
+      bottom: 77, // match PlaybackBar height
       zIndex: 10000,
       transition: transitions.create(["border-width", "top", "right", "bottom", "left"], {
         duration, // match to timeout duration inside Panel component
@@ -106,7 +108,10 @@ export const PanelRoot = forwardRef<HTMLDivElement, PropsWithChildren<PanelRootP
   function PanelRoot(props, ref): JSX.Element {
     const { fullscreenState, selected, sourceRect, hasFullscreenDescendant, className, ...rest } =
       props;
-    const { classes, cx } = usePanelRootStyles({ sourceRect, hasFullscreenDescendant });
+    const { classes, cx } = usePanelRootStyles({
+      sourceRect,
+      hasFullscreenDescendant,
+    });
 
     const classNames = cx(PANEL_ROOT_CLASS_NAME, className, classes.root, {
       [classes.entering]: fullscreenState === "entering",

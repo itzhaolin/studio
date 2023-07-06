@@ -11,11 +11,12 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { StoryObj } from "@storybook/react";
 import { useCallback } from "react";
-import TestUtils from "react-dom/test-utils";
 
+import Stack from "@foxglove/studio-base/components/Stack";
 import { BlockCache } from "@foxglove/studio-base/players/types";
-import PanelSetup from "@foxglove/studio-base/stories/PanelSetup";
+import PanelSetup, { Fixture } from "@foxglove/studio-base/stories/PanelSetup";
 import { useReadySignal } from "@foxglove/studio-base/stories/ReadySignalContext";
 import { expandedLineColors } from "@foxglove/studio-base/util/plotColors";
 
@@ -47,7 +48,7 @@ const systemStateMessages = [
   { header: { stamp: { sec: 1526191541, nsec: 789110904 } }, state: -1 },
 ];
 
-const fixture = {
+const fixture: Fixture = {
   datatypes: new Map(
     Object.entries({
       "msgs/SystemState": {
@@ -58,7 +59,7 @@ const fixture = {
           { type: "int8", name: "BOOTING", isConstant: true, value: 2 },
           { type: "int8", name: "ACTIVE", isConstant: true, value: 3 },
           { type: "int8", name: "state", isArray: false },
-          { type: "json", name: "data", isArray: false },
+          { type: "msgs/DataValue", name: "data", isArray: false, isComplex: true },
         ],
       },
       "std_msgs/Header": {
@@ -72,12 +73,15 @@ const fixture = {
           { name: "frame_id", type: "string", isArray: false },
         ],
       },
+      "msgs/DataValue": {
+        definitions: [{ type: "string", name: "value", isArray: false, isComplex: false }],
+      },
     }),
   ),
   topics: [
-    { name: "/some/topic/with/state", datatype: "msgs/SystemState" },
-    { name: "/some/topic/with/string_state", datatype: "msgs/SystemState" },
-    { name: "/blocks", datatype: "msgs/SystemState" },
+    { name: "/some/topic/with/state", schemaName: "msgs/SystemState" },
+    { name: "/some/topic/with/string_state", schemaName: "msgs/SystemState" },
+    { name: "/blocks", schemaName: "msgs/SystemState" },
   ],
   activeData: {
     startTime: { sec: 1526191527, nsec: 202050 },
@@ -90,6 +94,8 @@ const fixture = {
       topic: "/some/topic/with/state",
       receiveTime: message.header.stamp,
       message: { ...message, data: { value: idx } },
+      schemaName: "msgs/SystemState",
+
       sizeInBytes: 0,
     })),
     "/some/topic/with/string_state": systemStateMessages.map((message, idx) => {
@@ -98,6 +104,7 @@ const fixture = {
         topic: "/some/topic/with/string_state",
         receiveTime: message.header.stamp,
         message: { ...message, data: { value: values[idx % values.length] } },
+        schemaName: "msgs/SystemState",
         sizeInBytes: 0,
       };
     }),
@@ -108,151 +115,134 @@ export default {
   title: "panels/StateTransitions",
   component: StateTransitions,
   parameters: {
-    chromatic: {
-      delay: 100,
-    },
+    chromatic: { delay: 100 },
   },
 };
 
-export function ColorPalette(): JSX.Element {
-  return (
-    <div style={{ width: "100%", padding: "1rem" }}>
+export const ColorPalette: StoryObj = {
+  render: () => (
+    <Stack padding={2} fullWidth>
       {expandedLineColors.map((color) => (
         <div key={color} style={{ backgroundColor: color, height: "1rem" }} />
       ))}
-    </div>
-  );
-}
+    </Stack>
+  ),
+};
 
-OnePath.parameters = { useReadySignal: true };
-export function OnePath(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
-      <StateTransitions
-        overrideConfig={{
-          paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+export const OnePath: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
-WithSettings.parameters = { useReadySignal: true };
-export function WithSettings(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame} includeSettings>
-      <StateTransitions
-        overrideConfig={{
-          paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
+        <StateTransitions
+          overrideConfig={{
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};
 
-MultiplePaths.parameters = { useReadySignal: true };
-export function MultiplePaths(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
-      <StateTransitions
-        overrideConfig={{
-          paths: new Array(5).fill({
-            value: "/some/topic/with/state.state",
-            timestampMethod: "receiveTime",
-          }),
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+export const WithSettings: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
-MultiplePathsWithHover.parameters = { useReadySignal: true };
-export function MultiplePathsWithHover(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup
-      fixture={fixture}
-      pauseFrame={pauseFrame}
-      onMount={() => {
-        const mouseEnterContainer = document.querySelectorAll(
-          "[data-testid~=panel-mouseenter-container",
-        )[0]!;
-        TestUtils.Simulate.mouseEnter(mouseEnterContainer);
-      }}
-      style={{ width: 370 }}
-    >
-      <StateTransitions
-        overrideConfig={{
-          paths: new Array(5).fill({
-            value: "/some/topic/with/state.state",
-            timestampMethod: "receiveTime",
-          }),
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame} includeSettings>
+        <StateTransitions
+          overrideConfig={{
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};
 
-LongPath.parameters = { useReadySignal: true };
-export function LongPath(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame} style={{ maxWidth: 100 }}>
-      <StateTransitions
-        overrideConfig={{
-          paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+export const MultiplePaths: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
-JsonPath.parameters = { useReadySignal: true };
-export function JsonPath(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
-      <StateTransitions
-        overrideConfig={{
-          paths: [{ value: "/some/topic/with/state.data.value", timestampMethod: "receiveTime" }],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
+        <StateTransitions
+          overrideConfig={{
+            paths: new Array(5).fill({
+              value: "/some/topic/with/state.state",
+              timestampMethod: "receiveTime",
+            }),
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};
 
-ColorClash.parameters = { useReadySignal: true };
-export function ColorClash(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
-  return (
-    <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
-      <StateTransitions
-        overrideConfig={{
-          paths: [
-            { value: "/some/topic/with/string_state.data.value", timestampMethod: "receiveTime" },
-          ],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+export const LongPath: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame} style={{ maxWidth: 100 }}>
+        <StateTransitions
+          overrideConfig={{
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};
+
+export const ColorClash: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
+        <StateTransitions
+          overrideConfig={{
+            paths: [
+              { value: "/some/topic/with/string_state.data.value", timestampMethod: "receiveTime" },
+            ],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};
 
 const messageCache: BlockCache = {
   blocks: [
@@ -263,6 +253,8 @@ const messageCache: BlockCache = {
           topic: "/blocks",
           receiveTime: message.header.stamp,
           message: { ...message, data: { value: idx } },
+          schemaName: "msgs/SystemState",
+
           sizeInBytes: 0,
         })),
       },
@@ -274,6 +266,8 @@ const messageCache: BlockCache = {
           topic: "/blocks",
           receiveTime: message.header.stamp,
           message: { ...message, data: { value: idx } },
+          schemaName: "msgs/SystemState",
+
           sizeInBytes: 0,
         })),
       },
@@ -289,6 +283,7 @@ const messageCache: BlockCache = {
           topic: "/blocks",
           receiveTime: message.header.stamp,
           message: { ...message, data: { value: idx } },
+          schemaName: "msgs/SystemState",
           sizeInBytes: 0,
         })),
       },
@@ -297,25 +292,28 @@ const messageCache: BlockCache = {
   startTime: systemStateMessages[0]!.header.stamp,
 };
 
-Blocks.parameters = { useReadySignal: true };
-export function Blocks(): JSX.Element {
-  const readySignal = useReadySignal({ count: 3 });
-  const pauseFrame = useCallback(() => readySignal, [readySignal]);
+export const Blocks: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 3 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
-  const blockFixture = { ...fixture, progress: { messageCache } };
-
-  return (
-    <PanelSetup fixture={blockFixture} pauseFrame={pauseFrame}>
-      <StateTransitions
-        overrideConfig={{
-          paths: [
-            { value: "/some/topic/with/state.state", timestampMethod: "receiveTime" },
-            { value: "/blocks.state", timestampMethod: "receiveTime" },
-            { value: "/blocks.state", timestampMethod: "receiveTime" },
-          ],
-          isSynced: true,
-        }}
-      />
-    </PanelSetup>
-  );
-}
+    return (
+      <PanelSetup fixture={{ ...fixture, progress: { messageCache } }} pauseFrame={pauseFrame}>
+        <StateTransitions
+          overrideConfig={{
+            paths: [
+              { value: "/some/topic/with/state.state", timestampMethod: "receiveTime" },
+              { value: "/blocks.state", timestampMethod: "receiveTime" },
+              { value: "/blocks.state", timestampMethod: "receiveTime" },
+            ],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true },
+};

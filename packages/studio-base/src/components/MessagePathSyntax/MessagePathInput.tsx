@@ -15,7 +15,8 @@ import { Stack } from "@mui/material";
 import { flatten, flatMap, partition } from "lodash";
 import { CSSProperties, useCallback, useMemo } from "react";
 
-import { RosMsgField } from "@foxglove/rosmsg";
+import { MessageDefinitionField } from "@foxglove/message-definition";
+import { Immutable } from "@foxglove/studio";
 import * as PanelAPI from "@foxglove/studio-base/PanelAPI";
 import Autocomplete, { IAutocomplete } from "@foxglove/studio-base/components/Autocomplete";
 import useGlobalVariables, {
@@ -31,6 +32,7 @@ import {
   messagePathStructures,
   messagePathsForDatatype,
   validTerminatingStructureItem,
+  StructureTraversalResult,
 } from "./messagePathsForDatatype";
 import parseRosPath, { quoteFieldNameIfNeeded, quoteTopicNameIfNeeded } from "./parseRosPath";
 
@@ -53,12 +55,21 @@ import parseRosPath, { quoteFieldNameIfNeeded, quoteTopicNameIfNeeded } from "./
 
 // Get a list of Message Path strings for all of the fields (recursively) in a list of topics
 function getFieldPaths(
-  topics: readonly Topic[],
-  datatypes: RosDatatypes,
-): Map<string, RosMsgField> {
-  const output = new Map<string, RosMsgField>();
+  topics: Immutable<Topic[]>,
+  datatypes: Immutable<RosDatatypes>,
+): Map<string, MessageDefinitionField> {
+  const output = new Map<string, MessageDefinitionField>();
   for (const topic of topics) {
-    addFieldPathsForType(quoteTopicNameIfNeeded(topic.name), topic.datatype, datatypes, [], output);
+    if (topic.schemaName == undefined) {
+      continue;
+    }
+    addFieldPathsForType(
+      quoteTopicNameIfNeeded(topic.name),
+      topic.schemaName,
+      datatypes,
+      [],
+      output,
+    );
   }
   return output;
 }
@@ -66,9 +77,9 @@ function getFieldPaths(
 function addFieldPathsForType(
   curPath: string,
   typeName: string,
-  datatypes: RosDatatypes,
+  datatypes: Immutable<RosDatatypes>,
   seenTypes: string[],
-  output: Map<string, RosMsgField>,
+  output: Map<string, Immutable<MessageDefinitionField>>,
 ): void {
   const msgdef = datatypes.get(typeName);
   if (msgdef) {
@@ -153,8 +164,6 @@ function getExamplePrimitive(primitiveType: RosPrimitive) {
     case "int32":
     case "int64":
       return "0";
-    case "json":
-      return "";
   }
 }
 
@@ -196,7 +205,7 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
 
   const onChangeProp = props.onChange;
   const onChange = useCallback(
-    (event: React.SyntheticEvent<HTMLInputElement>, rawValue: string) => {
+    (event: React.SyntheticEvent<Element>, rawValue: string) => {
       // When typing a "{" character, also  insert a "}", so you get an
       // autocomplete window immediately for selecting a filter name.
       let value = rawValue;
@@ -204,7 +213,6 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
         const target = event.target as HTMLInputElement;
         const newCursorPosition = target.selectionEnd ?? 0;
         value = `${value.slice(0, newCursorPosition)}}${value.slice(newCursorPosition)}`;
-
         setImmediate(() => target.setSelectionRange(newCursorPosition, newCursorPosition));
       }
       onChangeProp(value, props.index);
@@ -266,12 +274,26 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
     [datatypes],
   );
 
-  const structureTraversalResult = useMemo(() => {
+  const structureTraversalResult = useMemo((): StructureTraversalResult | undefined => {
     if (!topic || !rosPath?.messagePath) {
       return undefined;
     }
+    if (topic.schemaName == undefined) {
+      return {
+        valid: true,
+        msgPathPart: undefined,
+        structureItem: {
+          structureType: "message",
+          nextByName: {},
+          datatype: "",
+        },
+      };
+    }
 
-    return traverseStructure(messagePathStructuresForDataype[topic.datatype], rosPath.messagePath);
+    return traverseStructure(
+      messagePathStructuresForDataype[topic.schemaName],
+      rosPath.messagePath,
+    );
   }, [messagePathStructuresForDataype, rosPath?.messagePath, topic]);
 
   const invalidGlobalVariablesVariable = useMemo(() => {
@@ -297,7 +319,7 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
     } else if (!topic) {
       return "topicName";
     } else if (
-      !structureTraversalResult ||
+      structureTraversalResult == undefined ||
       !structureTraversalResult.valid ||
       !validTerminatingStructureItem(structureTraversalResult.structureItem, validTypes)
     ) {
@@ -365,14 +387,17 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
           rosPath.messagePath[0]?.type === "filter" ? rosPath.messagePath[0].repr.length + 2 : 0;
 
         return {
-          autocompleteItems: messagePathsForDatatype(topic.datatype, datatypes, {
-            validTypes,
-            noMultiSlices,
-            messagePath: rosPath.messagePath,
-          }).filter(
-            // .header.seq is pretty useless but shows up everryyywhere.
-            (msgPath) => msgPath !== "" && !msgPath.endsWith(".header.seq"),
-          ),
+          autocompleteItems:
+            topic.schemaName == undefined
+              ? []
+              : messagePathsForDatatype(topic.schemaName, datatypes, {
+                  validTypes,
+                  noMultiSlices,
+                  messagePath: rosPath.messagePath,
+                }).filter(
+                  // .header.seq is pretty useless but shows up everryyywhere.
+                  (msgPath) => msgPath !== "" && !msgPath.endsWith(".header.seq"),
+                ),
 
           autocompleteRange: {
             start: rosPath.topicNameRepr.length + initialFilterLength,
@@ -431,7 +456,7 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
     return flatten(
       partition(
         autocompleteItems,
-        (item) => getTopicsByTopicName(topics)[item]?.datatype === prioritizedDatatype,
+        (item) => getTopicsByTopicName(topics)[item]?.schemaName === prioritizedDatatype,
       ),
     );
   }, [autocompleteItems, prioritizedDatatype, topics]);
@@ -459,11 +484,10 @@ export default React.memo<MessagePathInputBaseProps>(function MessagePathInput(
         filterText={autocompleteFilterText}
         value={path}
         onChange={onChange}
-        onSelect={(value, _item, autocomplete) =>
+        onSelect={(value, autocomplete) =>
           onSelect(value, autocomplete, autocompleteType, autocompleteRange)
         }
         hasError={hasError}
-        autocompleteKey={autocompleteType}
         placeholder={
           placeholder != undefined && placeholder !== "" ? placeholder : "/some/topic.msgs[0].field"
         }

@@ -29,8 +29,8 @@ const playerStateWithMessages = (messages: any): PlayerState => ({
   profile: undefined,
   activeData: {
     topics: [
-      { name: "/foo", datatype: "visualization_msgs/Marker" },
-      { name: "/bar", datatype: "visualization_msgs/Marker" },
+      { name: "/foo", schemaName: "visualization_msgs/Marker" },
+      { name: "/bar", schemaName: "visualization_msgs/Marker" },
     ],
     topicStats: new Map(),
     datatypes: new Map(),
@@ -51,7 +51,7 @@ const playerStateWithMessages = (messages: any): PlayerState => ({
 const message = (
   headerStampSeconds: number | undefined,
   receiveTimeSeconds: number | undefined,
-): MessageEvent<unknown> => ({
+): MessageEvent => ({
   topic: "/foo",
   receiveTime:
     receiveTimeSeconds == undefined ? undefined : ({ sec: receiveTimeSeconds, nsec: 1 } as any),
@@ -59,6 +59,7 @@ const message = (
     header:
       headerStampSeconds == undefined ? undefined : { stamp: { sec: headerStampSeconds, nsec: 1 } },
   },
+  schemaName: "visualization_msgs/Marker",
   sizeInBytes: 0,
 });
 
@@ -79,6 +80,15 @@ describe("MessagePipeline/MessageOrderTracker", () => {
           severity: "warn",
         },
       ]);
+    });
+
+    it("doesn't report out of order error when messages have been recomputed", () => {
+      const orderTracker = new MessageOrderTracker();
+      const playerState = playerStateWithMessages([message(7, 10), message(8, 9)]);
+      playerState.activeData!.messagesRecomputed = true;
+      const problems = orderTracker.update(playerState);
+
+      expect(problems).toEqual([]);
     });
 
     it("does not report an error when messages are in order", () => {

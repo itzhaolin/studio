@@ -10,11 +10,11 @@
 //   This source code is licensed under the Apache License, Version 2.0,
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
+
 import { MosaicNode, MosaicPath } from "react-mosaic-component";
 
 import { VariableValue } from "@foxglove/studio";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import { LinkedGlobalVariables } from "@foxglove/studio-base/panels/ThreeDimensionalViz/Interactions/useLinkedGlobalVariables";
 import { TabLocation } from "@foxglove/studio-base/types/layouts";
 import {
   UserNodes,
@@ -24,16 +24,20 @@ import {
   MosaicDropTargetPosition,
 } from "@foxglove/studio-base/types/panels";
 
-export type PanelsState = {
-  layout?: MosaicNode<string>;
+export type LayoutData = {
   // We store config for each panel in an object keyed by the panel id.
   configById: SavedProps;
+  layout?: MosaicNode<string>;
+  globalVariables: GlobalVariables;
+  playbackConfig: PlaybackConfig;
+  userNodes: UserNodes;
   /** @deprecated renamed to configById */
   savedProps?: SavedProps;
-  globalVariables: GlobalVariables;
-  userNodes: UserNodes;
-  linkedGlobalVariables: LinkedGlobalVariables;
-  playbackConfig: PlaybackConfig;
+  /**
+   * Optional version number. Set this to prevent older incompatible versions of
+   * studio trying to load and possibly corrupt the layout.
+   */
+  version?: number;
 };
 
 export type ConfigsPayload = {
@@ -86,11 +90,6 @@ export type SET_GLOBAL_DATA = {
 };
 
 export type SET_STUDIO_NODES = { type: "SET_USER_NODES"; payload: Partial<UserNodes> };
-
-export type SET_LINKED_GLOBAL_VARIABLES = {
-  type: "SET_LINKED_GLOBAL_VARIABLES";
-  payload: LinkedGlobalVariables;
-};
 
 export type SET_PLAYBACK_CONFIG = { type: "SET_PLAYBACK_CONFIG"; payload: Partial<PlaybackConfig> };
 
@@ -172,7 +171,6 @@ export type PanelsActions =
   | OVERWRITE_GLOBAL_DATA
   | SET_GLOBAL_DATA
   | SET_STUDIO_NODES
-  | SET_LINKED_GLOBAL_VARIABLES
   | SET_PLAYBACK_CONFIG
   | CLOSE_PANEL
   | SPLIT_PANEL

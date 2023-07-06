@@ -3,13 +3,22 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import { debounce } from "lodash";
-import { createContext } from "react";
+import {
+  createContext,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { StoreApi, useStore } from "zustand";
 
+import { useGuaranteedContext } from "@foxglove/hooks";
+import { Immutable } from "@foxglove/studio";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks/useAppConfigurationValue";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import useGuaranteedContext from "@foxglove/studio-base/hooks/useGuaranteedContext";
 import {
   Player,
   PlayerProblem,
@@ -28,8 +37,6 @@ import {
 import { MessagePipelineContext } from "./types";
 
 export type { MessagePipelineContext };
-
-const { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = React;
 
 // exported only for MockMessagePipelineProvider
 export const ContextInternal = createContext<StoreApi<MessagePipelineInternalState> | undefined>(
@@ -69,7 +76,6 @@ type ProviderProps = {
 };
 
 const selectRenderDone = (state: MessagePipelineInternalState) => state.renderDone;
-const selectPublishers = (state: MessagePipelineInternalState) => state.public.publishers;
 const selectSubscriptions = (state: MessagePipelineInternalState) => state.public.subscriptions;
 
 export function MessagePipelineProvider({
@@ -83,9 +89,9 @@ export function MessagePipelineProvider({
   );
   useEffect(() => {
     store.getState().dispatch({ type: "set-player", player });
+    player?.setPublishers(store.getState().allPublishers);
   }, [player, store]);
 
-  const publishers = useStore(store, selectPublishers);
   const subscriptions = useStore(store, selectSubscriptions);
 
   // Debounce the subscription updates for players. This batches multiple subscribe calls
@@ -93,7 +99,7 @@ export function MessagePipelineProvider({
   //
   // The delay of 0ms is intentional as we only want to give one timeout cycle to batch updates
   const debouncedPlayerSetSubscriptions = useMemo(() => {
-    return debounce((subs: SubscribePayload[]) => {
+    return debounce((subs: Immutable<SubscribePayload[]>) => {
       player?.setSubscriptions(subs);
     });
   }, [player]);
@@ -109,7 +115,6 @@ export function MessagePipelineProvider({
     () => debouncedPlayerSetSubscriptions(subscriptions),
     [debouncedPlayerSetSubscriptions, subscriptions],
   );
-  useEffect(() => player?.setPublishers(publishers), [player, publishers]);
 
   // Slow down the message pipeline framerate to the given FPS if it is set to less than 60
   const [messageRate] = useAppConfigurationValue<number>(AppSetting.MESSAGE_RATE);
@@ -126,6 +131,13 @@ export function MessagePipelineProvider({
   const dispatch = store.getState().dispatch;
   useEffect(() => {
     if (!player) {
+      // When there is no player, set the player state to the default to go back to a state where we
+      // indicate the player is not present.
+      dispatch({
+        type: "update-player-state",
+        playerState: defaultPlayerState(),
+        renderDone: undefined,
+      });
       return;
     }
 

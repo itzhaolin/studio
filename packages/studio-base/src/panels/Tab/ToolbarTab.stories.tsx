@@ -11,12 +11,11 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { storiesOf } from "@storybook/react";
+import { StoryObj } from "@storybook/react";
 import { noop } from "lodash";
 import React, { ReactNode } from "react";
 
 import { ToolbarTab } from "@foxglove/studio-base/panels/Tab/ToolbarTab";
-import tick from "@foxglove/studio-base/util/tick";
 
 const baseProps = {
   hidden: false,
@@ -46,46 +45,79 @@ const Container = React.forwardRef<HTMLDivElement, { children?: ReactNode }>(fun
   );
 });
 
-storiesOf("panels/Tab/ToolbarTab", module)
-  .add("default", () => (
+export default {
+  title: "panels/Tab/ToolbarTab",
+};
+
+export const Default: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...baseProps} />
     </Container>
-  ))
-  .add("active with close icon", () => (
+  ),
+
+  name: "default",
+};
+
+export const ActiveWithCloseIcon: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...{ ...baseProps, isActive: true, tabCount: 3 }} />
     </Container>
-  ))
-  .add("active without close icon", () => (
+  ),
+
+  name: "active with close icon",
+};
+
+export const ActiveWithoutCloseIcon: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...{ ...baseProps, isActive: true, tabCount: 1 }} />
     </Container>
-  ))
-  .add("hidden", () => (
+  ),
+
+  name: "active without close icon",
+};
+
+export const Hidden: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...{ ...baseProps, hidden: true }} />
     </Container>
-  ))
-  .add("highlight", () => (
+  ),
+
+  name: "hidden",
+};
+
+export const Highlight: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...{ ...baseProps, highlight: "before" }} />
     </Container>
-  ))
-  .add("dragging", () => (
+  ),
+
+  name: "highlight",
+};
+
+export const Dragging: StoryObj = {
+  render: () => (
     <Container>
       <ToolbarTab {...{ ...baseProps, isDragging: true }} />
     </Container>
-  ))
-  .add("editing", () => (
-    <Container
-      ref={async (el) => {
-        await tick();
-        if (el) {
-          el.querySelectorAll("input")[0]?.click();
-        }
-      }}
-    >
+  ),
+
+  name: "dragging",
+};
+
+export const Editing: StoryObj = {
+  render: () => (
+    <Container>
       <ToolbarTab {...{ ...baseProps, isActive: true }} />
     </Container>
-  ));
+  ),
+
+  name: "editing",
+  play: () => {
+    document.querySelectorAll("input")[0]!.click();
+  },
+};

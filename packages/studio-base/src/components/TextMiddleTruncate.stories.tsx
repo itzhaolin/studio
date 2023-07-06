@@ -10,39 +10,62 @@
 //   This source code is licensed under the Apache License, Version 2.0,
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
-import { storiesOf } from "@storybook/react";
+
+import { StoryObj } from "@storybook/react";
+import { fireEvent, screen } from "@storybook/testing-library";
 
 import TextMiddleTruncate from "./TextMiddleTruncate";
 
 const LONG_TOPIC_NAME =
   "/some_really_long_topic_name/some/long/text/lorem/ipsum/dolor/sit/amet/consectetur/adipisicing/voluptate/laborum/amet/velit/eius/cum/modi//sapiente/natus/unde/end_topic_name";
-storiesOf("components/TextMiddleTruncate", module).add("default", () => {
-  return (
-    <div style={{ width: 240, border: "1px solid gray", margin: 16 }}>
-      <div>
-        <p>Short text:</p>
+
+export default {
+  title: "components/TextMiddleTruncate",
+  component: TextMiddleTruncate,
+};
+
+async function hoverText(): Promise<void> {
+  const allText = await screen.findAllByTestId("text-middle-truncate");
+  fireEvent.pointerOver(allText[3]!);
+}
+
+export const Default: StoryObj = {
+  render: function Story() {
+    return (
+      <div
+        style={{
+          display: "grid",
+          gridAutoRows: 84,
+          gridTemplateColumns: "300px 240px",
+          gap: 16,
+          padding: 16,
+        }}
+      >
+        <div>Short text:</div>
         <TextMiddleTruncate text="Some short text" />
-      </div>
-      <div>
-        <p>Long text:</p>
+
+        <div>Long text:</div>
         <TextMiddleTruncate text="Some long text Lorem ipsum dolor sit amet consectetur adipisicing elit. Voluptate laborum amet velit eius cum modi qui. Sapiente natus unde assumenda." />
-      </div>
-      <div>
-        <p>Specifify endTextLength as 20:</p>
+
+        <div>Specifify endTextLength as 20:</div>
         <TextMiddleTruncate
           endTextLength={20}
           text="Some long text Lorem ipsum dolor sit amet consectetur adipisicing elit. Voluptate laborum amet velit eius cum modi qui. Sapiente natus unde assumenda."
         />
-      </div>
-      <div>
-        <p>Show the last part of topic name with visibile tooltip:</p>
+
+        <div>Show the last part of topic name with visibile text:</div>
         <TextMiddleTruncate
-          tooltips={[<span key="0">This is a topic tooltip</span>]}
-          testShowTooltip
           endTextLength={LONG_TOPIC_NAME.split("/").pop()!.length + 1}
           text={LONG_TOPIC_NAME}
         />
+
+        <div>Whitespace handling</div>
+        <div style={{ width: "12em" }}>
+          <TextMiddleTruncate text="Open a new connection..." endTextLength={18} />
+        </div>
       </div>
-    </div>
-  );
-});
+    );
+  },
+
+  play: hoverText,
+};

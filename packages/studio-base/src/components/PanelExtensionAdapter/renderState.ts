@@ -2,36 +2,57 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { toSec } from "@foxglove/rostime";
+import memoizeWeak from "memoize-weak";
+import { Writable } from "ts-essentials";
+
+import { filterMap } from "@foxglove/den/collection";
+import { compare, toSec } from "@foxglove/rostime";
 import {
   AppSettingValue,
+  Immutable,
   MessageEvent,
   ParameterValue,
+  RegisterMessageConverterArgs,
   RenderState,
+  Subscription,
   Topic,
 } from "@foxglove/studio";
 import {
   EMPTY_GLOBAL_VARIABLES,
   GlobalVariables,
 } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import { PlayerState } from "@foxglove/studio-base/players/types";
+import {
+  MessageBlock,
+  PlayerState,
+  Topic as PlayerTopic,
+} from "@foxglove/studio-base/players/types";
 import { HoverValue } from "@foxglove/studio-base/types/hoverValue";
+
+import {
+  collateTopicSchemaConversions,
+  convertMessage,
+  forEachSortedArrays,
+  mapDifference,
+  TopicSchemaConversions,
+} from "./messageProcessing";
 
 const EmptyParameters = new Map<string, ParameterValue>();
 
-type BuilderRenderStateInput = {
-  watchedFields: Set<string>;
-  playerState: PlayerState | undefined;
+export type BuilderRenderStateInput = Immutable<{
   appSettings: Map<string, AppSettingValue> | undefined;
-  currentFrame: MessageEvent<unknown>[] | undefined;
   colorScheme: RenderState["colorScheme"] | undefined;
+  currentFrame: MessageEvent[] | undefined;
   globalVariables: GlobalVariables;
   hoverValue: HoverValue | undefined;
-  sortedTopics: readonly Topic[];
-  subscribedTopics: string[];
-};
+  messageConverters?: readonly RegisterMessageConverterArgs<unknown>[];
+  playerState: PlayerState | undefined;
+  sharedPanelState: Record<string, unknown> | undefined;
+  sortedTopics: readonly PlayerTopic[];
+  subscriptions: Subscription[];
+  watchedFields: Set<string>;
+}>;
 
-type BuildRenderStateFn = (input: BuilderRenderStateInput) => Readonly<RenderState> | undefined;
+type BuildRenderStateFn = (input: BuilderRenderStateInput) => Immutable<RenderState> | undefined;
 
 /**
  * initRenderStateBuilder creates a function that transforms render state input into a new
@@ -44,42 +65,62 @@ type BuildRenderStateFn = (input: BuilderRenderStateInput) => Readonly<RenderSta
  * undefined if there's no update for rendering
  */
 function initRenderStateBuilder(): BuildRenderStateFn {
-  let prevVariables: GlobalVariables = EMPTY_GLOBAL_VARIABLES;
-  let prevBlocks: unknown;
+  let prevVariables: Immutable<GlobalVariables> = EMPTY_GLOBAL_VARIABLES;
+  let prevBlocks: undefined | Immutable<(undefined | MessageBlock)[]>;
   let prevSeekTime: number | undefined;
-  let prevSubscribedTopics: string[];
+  let prevSortedTopics: BuilderRenderStateInput["sortedTopics"] | undefined;
+  let prevMessageConverters: BuilderRenderStateInput["messageConverters"] | undefined;
+  let prevSharedPanelState: BuilderRenderStateInput["sharedPanelState"];
+  let prevCurrentFrame: Immutable<RenderState["currentFrame"]>;
+  let prevCollatedConversions: undefined | TopicSchemaConversions;
+  const lastMessageByTopic: Map<string, MessageEvent> = new Map();
 
-  const prevRenderState: RenderState = {};
+  // Pull these memoized versions into the closure so they are scoped to the lifetime of
+  // the panel.
+  const memoMapDifference = memoizeWeak(mapDifference);
+  const memoCollateTopicSchemaConversions = memoizeWeak(collateTopicSchemaConversions);
+
+  const prevRenderState: Writable<Immutable<RenderState>> = {};
 
   return function buildRenderState(input: BuilderRenderStateInput) {
     const {
-      playerState,
-      watchedFields,
       appSettings,
-      currentFrame,
       colorScheme,
+      currentFrame,
       globalVariables,
       hoverValue,
-      subscribedTopics,
+      messageConverters,
+      playerState,
+      sharedPanelState,
       sortedTopics,
+      subscriptions,
+      watchedFields,
     } = input;
-
-    // If the player has loaded all the blocks, the blocks reference won't change so our message
-    // pipeline handler for allFrames won't create a new set of all frames for the newly
-    // subscribed topic. To ensure a new set of allFrames with the newly subscribed topic is
-    // created, we unset the blocks ref which will force re-creating allFrames.
-    if (subscribedTopics !== prevSubscribedTopics) {
-      prevBlocks = undefined;
-    }
-    prevSubscribedTopics = subscribedTopics;
 
     // Should render indicates whether any fields of render state are updated
     let shouldRender = false;
 
+    // Hoisted active data to shorten some of the code below that repeatedly uses active data
     const activeData = playerState?.activeData;
 
     // The render state starts with the previous render state and changes are applied as detected
-    const renderState: RenderState = prevRenderState;
+    const renderState = prevRenderState;
+
+    const collatedConversions = memoCollateTopicSchemaConversions(
+      subscriptions,
+      sortedTopics,
+      messageConverters,
+    );
+    const { unconvertedSubscriptionTopics, topicSchemaConverters } = collatedConversions;
+    const conversionsChanged = prevCollatedConversions !== collatedConversions;
+    const newConverters = memoMapDifference(
+      topicSchemaConverters,
+      prevCollatedConversions?.topicSchemaConverters,
+    );
+
+    if (prevSeekTime !== activeData?.lastSeekTime) {
+      lastMessageByTopic.clear();
+    }
 
     if (watchedFields.has("didSeek")) {
       const didSeek = prevSeekTime !== activeData?.lastSeekTime;
@@ -90,22 +131,19 @@ function initRenderStateBuilder(): BuildRenderStateFn {
       prevSeekTime = activeData?.lastSeekTime;
     }
 
-    if (watchedFields.has("currentFrame")) {
-      // If there are new frames we render
-      // If there are old frames we render (new frames either replace old or no new frames)
-      // Note: renderState.currentFrame.length !== currentFrame.length is wrong because it
-      // won't render when the number of messages is the same from old to new
-      if (renderState.currentFrame?.length !== 0 || currentFrame?.length !== 0) {
-        shouldRender = true;
-        renderState.currentFrame = currentFrame;
-      }
-    }
-
     if (watchedFields.has("parameters")) {
       const parameters = activeData?.parameters ?? EmptyParameters;
       if (parameters !== renderState.parameters) {
         shouldRender = true;
         renderState.parameters = parameters;
+      }
+    }
+
+    if (watchedFields.has("sharedPanelState")) {
+      if (sharedPanelState !== prevSharedPanelState) {
+        shouldRender = true;
+        prevSharedPanelState = sharedPanelState;
+        renderState.sharedPanelState = sharedPanelState;
       }
     }
 
@@ -118,47 +156,135 @@ function initRenderStateBuilder(): BuildRenderStateFn {
     }
 
     if (watchedFields.has("topics")) {
-      if (sortedTopics !== prevRenderState.topics) {
+      if (sortedTopics !== prevSortedTopics || prevMessageConverters !== messageConverters) {
         shouldRender = true;
-        renderState.topics = sortedTopics;
+
+        const topics = sortedTopics.map<Topic>((topic) => {
+          const newTopic: Topic = {
+            name: topic.name,
+            datatype: topic.schemaName ?? "",
+            schemaName: topic.schemaName ?? "",
+          };
+
+          if (messageConverters) {
+            const convertibleTo: string[] = [];
+
+            // find any converters that can convert _from_ the schema name of the topic
+            // the _to_ names of the converter become additional schema names for the topic entry
+            for (const converter of messageConverters) {
+              if (converter.fromSchemaName === topic.schemaName) {
+                if (!convertibleTo.includes(converter.toSchemaName)) {
+                  convertibleTo.push(converter.toSchemaName);
+                }
+              }
+            }
+
+            if (convertibleTo.length > 0) {
+              newTopic.convertibleTo = convertibleTo;
+            }
+          }
+
+          return newTopic;
+        });
+
+        renderState.topics = topics;
+        prevSortedTopics = sortedTopics;
       }
     }
 
-    if (watchedFields.has("allFrames")) {
-      // see comment for prevBlocksRef on why extended message store updates are gated this way
-      const newBlocks = playerState?.progress.messageCache?.blocks;
-      if (newBlocks && prevBlocks !== newBlocks) {
+    if (watchedFields.has("currentFrame")) {
+      if (currentFrame && currentFrame !== prevCurrentFrame) {
+        // If we have a new frame, emit that frame and process all messages on that frame.
+        // Unconverted messages are only processed on a new frame.
+        const postProcessedFrame: MessageEvent<unknown>[] = [];
+        for (const messageEvent of currentFrame) {
+          if (unconvertedSubscriptionTopics.has(messageEvent.topic)) {
+            postProcessedFrame.push(messageEvent);
+          }
+          convertMessage(messageEvent, topicSchemaConverters, postProcessedFrame);
+          lastMessageByTopic.set(messageEvent.topic, messageEvent);
+        }
+        renderState.currentFrame = postProcessedFrame;
         shouldRender = true;
+      } else if (conversionsChanged) {
+        // If we don't have a new frame but our conversions have changed, run
+        // only the new conversions on our most recent message on each topic.
+        const postProcessedFrame: MessageEvent<unknown>[] = [];
+        for (const messageEvent of lastMessageByTopic.values()) {
+          convertMessage(messageEvent, newConverters, postProcessedFrame);
+        }
+        renderState.currentFrame = postProcessedFrame;
+        shouldRender = true;
+      } else if (currentFrame !== prevCurrentFrame) {
+        // Otherwise if we're replacing a non-empty frame with an empty frame and
+        // conversions haven't changed, include the empty frame in the new render state.
+        renderState.currentFrame = currentFrame;
+        shouldRender = true;
+      }
+
+      prevCurrentFrame = currentFrame;
+    }
+
+    if (watchedFields.has("allFrames")) {
+      // Rebuild allFrames if we have new blocks or if our conversions have changed.
+      const newBlocks = playerState?.progress.messageCache?.blocks;
+      if ((newBlocks && prevBlocks !== newBlocks) || conversionsChanged) {
+        shouldRender = true;
+        const blocksToProcess = newBlocks ?? prevBlocks ?? [];
         const frames: MessageEvent<unknown>[] = (renderState.allFrames = []);
-        for (const block of newBlocks) {
+        // only populate allFrames with topics that the panel wants to preload
+        const topicsToPreloadForPanel = Array.from(
+          new Set<string>(
+            filterMap(subscriptions, (sub) => (sub.preload === true ? sub.topic : undefined)),
+          ),
+        );
+
+        for (const block of blocksToProcess) {
           if (!block) {
             continue;
           }
 
-          for (const messageEvents of Object.values(block.messagesByTopic)) {
-            for (const messageEvent of messageEvents) {
-              if (!subscribedTopics.includes(messageEvent.topic)) {
-                continue;
+          // Given that messagesByTopic should be in order by receiveTime, we need to
+          // combine all of the messages into a single array and sorted by receive time.
+          forEachSortedArrays(
+            topicsToPreloadForPanel.map((topic) => block.messagesByTopic[topic] ?? []),
+            (a, b) => compare(a.receiveTime, b.receiveTime),
+            (messageEvent) => {
+              // Message blocks may contain topics that we are not subscribed to so we
+              // need to filter those out. We use unconvertedSubscriptionTopics to
+              // determine if we should include the message event. Clients expect
+              // allFrames to be a complete set of messages for all subscribed topics so
+              // we include all unconverted and converted messages, unlike in
+              // currentFrame.
+              if (unconvertedSubscriptionTopics.has(messageEvent.topic)) {
+                frames.push(messageEvent);
               }
-              frames.push(messageEvent);
-            }
-          }
+              convertMessage(messageEvent, topicSchemaConverters, frames);
+            },
+          );
         }
       }
       prevBlocks = newBlocks;
     }
 
     if (watchedFields.has("currentTime")) {
-      const currentTime = activeData?.currentTime;
-
-      if (currentTime != undefined && currentTime !== renderState.currentTime) {
+      if (renderState.currentTime !== activeData?.currentTime) {
+        renderState.currentTime = activeData?.currentTime;
         shouldRender = true;
-        renderState.currentTime = currentTime;
-      } else {
-        if (renderState.currentTime != undefined) {
-          shouldRender = true;
-        }
-        renderState.currentTime = undefined;
+      }
+    }
+
+    if (watchedFields.has("startTime")) {
+      if (renderState.startTime !== activeData?.startTime) {
+        renderState.startTime = activeData?.startTime;
+        shouldRender = true;
+      }
+    }
+
+    if (watchedFields.has("endTime")) {
+      if (renderState.endTime !== activeData?.endTime) {
+        renderState.endTime = activeData?.endTime;
+        shouldRender = true;
       }
     }
 
@@ -192,6 +318,11 @@ function initRenderStateBuilder(): BuildRenderStateFn {
         renderState.appSettings = appSettings;
       }
     }
+
+    // Update the prev fields with the latest values at the end of all the watch steps
+    // Several of the watch steps depend on the comparison against prev and new values
+    prevMessageConverters = messageConverters;
+    prevCollatedConversions = collatedConversions;
 
     if (!shouldRender) {
       return undefined;

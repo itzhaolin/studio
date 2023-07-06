@@ -9,7 +9,6 @@ import { ColorRGBA, Vector3 } from "./ros";
 const INITIAL_CAPACITY = 4;
 
 const tempMat4 = new THREE.Matrix4();
-const tempColor = new THREE.Color();
 
 /**
  * Extends InstancedMesh with a set() method that takes a list of points and
@@ -20,13 +19,13 @@ export class DynamicInstancedMesh<
   TMaterial extends THREE.Material | THREE.Material[] = THREE.Material | THREE.Material[],
 > extends THREE.InstancedMesh<TGeometry, TMaterial> {
   // Total size of the buffer attributes, which can be larger than .count (instances in use)
-  private _capacity: number;
+  #capacity: number;
 
   public constructor(geometry: TGeometry, material: TMaterial, initialCapacity = INITIAL_CAPACITY) {
     super(geometry, material, 0);
 
-    this._capacity = initialCapacity;
-    this._resize();
+    this.#capacity = initialCapacity;
+    this.#resize();
   }
 
   public set(
@@ -36,8 +35,9 @@ export class DynamicInstancedMesh<
     defaultColor: ColorRGBA,
   ): void {
     const count = points.length;
-    this._setCount(count);
+    this.#setCount(count);
 
+    const colorArray = this.instanceColor!.array as Uint8ClampedArray;
     for (let i = 0; i < count; i++) {
       const point = points[i]!;
       const color = colors[i] ?? defaultColor;
@@ -46,31 +46,36 @@ export class DynamicInstancedMesh<
       tempMat4.scale(scale as THREE.Vector3);
       this.setMatrixAt(i, tempMat4);
 
-      tempColor.setRGB(color.r, color.g, color.b);
-      this.setColorAt(i, tempColor);
+      colorArray[i * 3 + 0] = (color.r * 255) | 0;
+      colorArray[i * 3 + 1] = (color.g * 255) | 0;
+      colorArray[i * 3 + 2] = (color.b * 255) | 0;
+    }
+    this.instanceMatrix.needsUpdate = true;
+    if (this.instanceColor) {
+      this.instanceColor.needsUpdate = true;
     }
   }
 
-  private _setCount(count: number) {
-    while (count >= this._capacity) {
-      this._expand();
+  #setCount(count: number) {
+    while (count >= this.#capacity) {
+      this.#expand();
     }
     this.count = count;
     this.instanceMatrix.count = count;
     this.instanceColor!.count = count;
   }
 
-  private _expand() {
-    this._capacity = this._capacity + Math.trunc(this._capacity / 2) + 16;
-    this._resize();
+  #expand() {
+    this.#capacity = this.#capacity + Math.trunc(this.#capacity / 2) + 16;
+    this.#resize();
   }
 
-  private _resize() {
+  #resize() {
     const oldMatrixArray = this.instanceMatrix.array as Float32Array;
-    const oldColorArray = this.instanceColor?.array as Float32Array | undefined;
+    const oldColorArray = this.instanceColor?.array as Uint8ClampedArray | undefined;
 
-    const newMatrixArray = new Float32Array(this._capacity * 16);
-    const newColorArray = new Float32Array(this._capacity * 3);
+    const newMatrixArray = new Float32Array(this.#capacity * 16);
+    const newColorArray = new Uint8ClampedArray(this.#capacity * 3);
 
     if (oldMatrixArray.length > 0) {
       newMatrixArray.set(oldMatrixArray);
@@ -80,7 +85,7 @@ export class DynamicInstancedMesh<
     }
 
     this.instanceMatrix = new THREE.InstancedBufferAttribute(newMatrixArray, 16);
-    this.instanceColor = new THREE.InstancedBufferAttribute(newColorArray, 3);
+    this.instanceColor = new THREE.InstancedBufferAttribute(newColorArray, 3, true);
 
     this.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.instanceColor.setUsage(THREE.DynamicDrawUsage);

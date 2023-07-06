@@ -37,7 +37,6 @@ const createProperty = (name: string | ts.PropertyName, type: ts.TypeNode) => {
 
 const createTimeInterfaceDeclaration = (name: string) => {
   return ts.factory.createInterfaceDeclaration(
-    undefined /* decorators */,
     modifiers /* modifiers */,
     name /* name */,
     undefined /* typeParameters */,
@@ -51,8 +50,6 @@ const createTimeInterfaceDeclaration = (name: string) => {
 
 // Since rosbagjs treats json as a primitive, we have to shim it in.
 const jsonInterfaceDeclaration = ts.factory.createInterfaceDeclaration(
-  undefined,
-  /* decorators */
   modifiers,
   /* modifiers */
   "json",
@@ -134,7 +131,6 @@ export const generateTypeDefs = (datatypes: RosDatatypes): InterfaceDeclarations
     });
 
     interfaceDeclarations[datatype] = ts.factory.createInterfaceDeclaration(
-      undefined /* decorators */,
       [ts.factory.createModifier(ts.SyntaxKind.ExportKeyword)] /* modifiers */,
       formatInterfaceName(datatype) /* name */,
       undefined /* typeParameters */,
@@ -155,7 +151,6 @@ const generateRosLib = ({
   datatypes: RosDatatypes;
 }): string => {
   let TopicsToMessageDefinition = ts.factory.createInterfaceDeclaration(
-    undefined,
     modifiers,
     "TopicsToMessageDefinition",
     undefined,
@@ -164,8 +159,6 @@ const generateRosLib = ({
   );
 
   const typedMessage = ts.factory.createInterfaceDeclaration(
-    undefined,
-    /* decorators */
     modifiers,
     /* modifiers */
     "Input",
@@ -195,19 +188,20 @@ const generateRosLib = ({
 
   let datatypeInterfaces = generateTypeDefs(datatypes);
 
-  topics.forEach(({ name, datatype }) => {
-    if (!datatypeInterfaces[datatype]) {
+  topics.forEach(({ name, schemaName }) => {
+    if (schemaName == undefined) {
+      return;
+    }
+    if (!datatypeInterfaces[schemaName]) {
       datatypeInterfaces = {
         ...datatypeInterfaces,
-        ...generateTypeDefs(new Map(Object.entries({ [datatype]: { definitions: [] } }))),
+        ...generateTypeDefs(new Map(Object.entries({ [schemaName]: { definitions: [] } }))),
       };
     }
 
     TopicsToMessageDefinition = ts.factory.updateInterfaceDeclaration(
       TopicsToMessageDefinition,
       /* node */
-      undefined,
-      /* decorators */
       modifiers,
       /* modifiers */
       TopicsToMessageDefinition.name,
@@ -220,7 +214,7 @@ const generateRosLib = ({
         createProperty(
           ts.factory.createStringLiteral(name),
           ts.factory.createTypeReferenceNode(
-            `${DATATYPES_IDENTIFIER}.${formatInterfaceName(datatype)}`,
+            `${DATATYPES_IDENTIFIER}.${formatInterfaceName(schemaName)}`,
           ),
         ),
       ],
@@ -229,8 +223,6 @@ const generateRosLib = ({
   });
 
   const datatypesNamespace = ts.factory.createModuleDeclaration(
-    undefined,
-    /* decorators */
     modifiers,
     /* modifiers */
     ts.factory.createIdentifier(DATATYPES_IDENTIFIER),

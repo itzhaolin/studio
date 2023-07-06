@@ -15,23 +15,26 @@ import { useSnackbar } from "notistack";
 import {
   PropsWithChildren,
   useCallback,
-  useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useState,
 } from "react";
 import { useLatest, useMountedState } from "react-use";
 
-import { useShallowMemo } from "@foxglove/hooks";
+import { useShallowMemo, useWarnImmediateReRender } from "@foxglove/hooks";
 import Logger from "@foxglove/log";
 import { MessagePipelineProvider } from "@foxglove/studio-base/components/MessagePipeline";
 import { useAnalytics } from "@foxglove/studio-base/context/AnalyticsContext";
-import ConsoleApiContext from "@foxglove/studio-base/context/ConsoleApiContext";
 import {
   LayoutState,
   useCurrentLayoutActions,
   useCurrentLayoutSelector,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
+import {
+  ExtensionCatalog,
+  useExtensionCatalog,
+} from "@foxglove/studio-base/context/ExtensionCatalogContext";
 import { useLayoutManager } from "@foxglove/studio-base/context/LayoutManagerContext";
 import { useNativeWindow } from "@foxglove/studio-base/context/NativeWindowContext";
 import PlayerSelectionContext, {
@@ -41,9 +44,9 @@ import PlayerSelectionContext, {
 } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import { useUserNodeState } from "@foxglove/studio-base/context/UserNodeStateContext";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
-import useIndexedDbRecents from "@foxglove/studio-base/hooks/useIndexedDbRecents";
-import useWarnImmediateReRender from "@foxglove/studio-base/hooks/useWarnImmediateReRender";
+import useIndexedDbRecents, { RecentRecord } from "@foxglove/studio-base/hooks/useIndexedDbRecents";
 import AnalyticsMetricsCollector from "@foxglove/studio-base/players/AnalyticsMetricsCollector";
+import { TopicAliasingPlayer } from "@foxglove/studio-base/players/TopicAliasingPlayer/TopicAliasingPlayer";
 import UserNodePlayer from "@foxglove/studio-base/players/UserNodePlayer";
 import { Player } from "@foxglove/studio-base/players/types";
 import { UserNodes } from "@foxglove/studio-base/types/panels";
@@ -61,6 +64,8 @@ const userNodesSelector = (state: LayoutState) =>
   state.selectedLayout?.data?.userNodes ?? EMPTY_USER_NODES;
 const globalVariablesSelector = (state: LayoutState) =>
   state.selectedLayout?.data?.globalVariables ?? EMPTY_GLOBAL_VARIABLES;
+const selectTopicAliasFunctions = (catalog: ExtensionCatalog) =>
+  catalog.installedTopicAliasFunctions;
 
 export default function PlayerManager(props: PropsWithChildren<PlayerManagerProps>): JSX.Element {
   const { children, playerSources } = props;
@@ -83,9 +88,6 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
   const analytics = useAnalytics();
   const metricsCollector = useMemo(() => new AnalyticsMetricsCollector(analytics), [analytics]);
 
-  // When we implement per-data-connector UI settings we will move this into the foxglove data platform source.
-  const consoleApi = useContext(ConsoleApiContext);
-
   const layoutStorage = useLayoutManager();
   const { setSelectedLayoutId } = useCurrentLayoutActions();
 
@@ -93,6 +95,8 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
 
   const userNodes = useCurrentLayoutSelector(userNodesSelector);
   const globalVariables = useCurrentLayoutSelector(globalVariablesSelector);
+
+  const topicAliasFunctions = useExtensionCatalog(selectTopicAliasFunctions);
 
   const { recents, addRecent } = useIndexedDbRecents();
 
@@ -104,15 +108,48 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
   // the message pipeline
   const globalVariablesRef = useLatest(globalVariables);
 
-  const player = useMemo(() => {
+  // Initialize the topic aliasing player with the alias functions and global variables we
+  // have at first load. Any changes in alias functions caused by dynamically loaded
+  // extensions or new variables have to be set separately because we can only construct
+  // the wrapping player once since the underlying player doesn't allow us set a new
+  // listener after the initial listener is set.
+  const [initialTopicAliasFunctions] = useState(topicAliasFunctions);
+  const [initialGlobalVariables] = useState(globalVariables);
+  const topicAliasPlayer = useMemo(() => {
     if (!basePlayer) {
       return undefined;
     }
 
-    const userNodePlayer = new UserNodePlayer(basePlayer, userNodeActions);
+    return new TopicAliasingPlayer(
+      basePlayer,
+      initialTopicAliasFunctions ?? [],
+      initialGlobalVariables,
+    );
+  }, [basePlayer, initialGlobalVariables, initialTopicAliasFunctions]);
+
+  // Topic aliases can change if we hot load a new extension with new alias functions.
+  useEffect(() => {
+    if (topicAliasFunctions !== initialTopicAliasFunctions) {
+      topicAliasPlayer?.setAliasFunctions(topicAliasFunctions ?? []);
+    }
+  }, [initialTopicAliasFunctions, topicAliasPlayer, topicAliasFunctions]);
+
+  // Topic alias player needs updated global variables.
+  useEffect(() => {
+    if (globalVariables !== initialGlobalVariables) {
+      topicAliasPlayer?.setGlobalVariables(globalVariables);
+    }
+  }, [globalVariables, initialGlobalVariables, topicAliasPlayer]);
+
+  const player = useMemo(() => {
+    if (!topicAliasPlayer) {
+      return undefined;
+    }
+
+    const userNodePlayer = new UserNodePlayer(topicAliasPlayer, userNodeActions);
     userNodePlayer.setGlobalVariables(globalVariablesRef.current);
     return userNodePlayer;
-  }, [basePlayer, globalVariablesRef, userNodeActions]);
+  }, [globalVariablesRef, topicAliasPlayer, userNodeActions]);
 
   useLayoutEffect(() => void player?.setUserNodes(userNodes), [player, userNodes]);
 
@@ -125,7 +162,9 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
       // Clear any previous represented filename
       void nativeWindow?.setRepresentedFilename(undefined);
 
-      const foundSource = playerSources.find((source) => source.id === sourceId);
+      const foundSource = playerSources.find(
+        (source) => source.id === sourceId || source.legacyIds?.includes(sourceId),
+      );
       if (!foundSource) {
         enqueueSnackbar(`Unknown data source: ${sourceId}`, { variant: "warning" });
         return;
@@ -136,7 +175,6 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
       // Sample sources don't need args or prompts to initialize
       if (foundSource.type === "sample") {
         const newPlayer = foundSource.initialize({
-          consoleApi,
           metricsCollector,
         });
 
@@ -174,9 +212,8 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
         switch (args.type) {
           case "connection": {
             const newPlayer = foundSource.initialize({
-              ...args.params,
-              consoleApi,
               metricsCollector,
+              params: args.params,
             });
             setBasePlayer(newPlayer);
 
@@ -272,7 +309,6 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
       playerSources,
       metricsCollector,
       enqueueSnackbar,
-      consoleApi,
       layoutStorage,
       isMounted,
       setSelectedLayoutId,
@@ -282,31 +318,10 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
   );
 
   // Select a recent entry by id
+  // necessary to pull out callback creation to avoid capturing the initial player in closure context
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const selectRecent = useCallback(
-    (recentId: string) => {
-      // find the recent from the list and initialize
-      const foundRecent = recents.find((value) => value.id === recentId);
-      if (!foundRecent) {
-        enqueueSnackbar(`Failed to restore recent: ${recentId}`, { variant: "error" });
-        return;
-      }
-
-      switch (foundRecent.type) {
-        case "connection": {
-          void selectSource(foundRecent.sourceId, {
-            type: "connection",
-            params: foundRecent.extra,
-          });
-          break;
-        }
-        case "file": {
-          void selectSource(foundRecent.sourceId, {
-            type: "file",
-            handle: foundRecent.handle,
-          });
-        }
-      }
-    },
+    createSelectRecentCallback(recents, selectSource, enqueueSnackbar),
     [recents, enqueueSnackbar, selectSource],
   );
 
@@ -333,4 +348,44 @@ export default function PlayerManager(props: PropsWithChildren<PlayerManagerProp
       </PlayerSelectionContext.Provider>
     </>
   );
+}
+
+/**
+ * This was moved out of the PlayerManager function due to a memory leak occurring in memoized state of Start.tsx
+ * that was retaining old player instances. Having this callback be defined within the PlayerManager makes it store the
+ * player at instantiation within the closure context. That callback is then stored in the memoized state with its closure context.
+ * The callback is updated when the player changes but part of the `Start.tsx` holds onto the formerly memoized state for an
+ * unknown reason.
+ * To make this function safe from storing old closure contexts in old memoized state in components where it
+ * is used, it has been moved out of the PlayerManager function.
+ */
+function createSelectRecentCallback(
+  recents: RecentRecord[],
+  selectSource: (sourceId: string, dataSourceArgs: DataSourceArgs) => Promise<void>,
+  enqueueSnackbar: ReturnType<typeof useSnackbar>["enqueueSnackbar"],
+) {
+  return (recentId: string) => {
+    // find the recent from the list and initialize
+    const foundRecent = recents.find((value) => value.id === recentId);
+    if (!foundRecent) {
+      enqueueSnackbar(`Failed to restore recent: ${recentId}`, { variant: "error" });
+      return;
+    }
+
+    switch (foundRecent.type) {
+      case "connection": {
+        void selectSource(foundRecent.sourceId, {
+          type: "connection",
+          params: foundRecent.extra,
+        });
+        break;
+      }
+      case "file": {
+        void selectSource(foundRecent.sourceId, {
+          type: "file",
+          handle: foundRecent.handle,
+        });
+      }
+    }
+  };
 }

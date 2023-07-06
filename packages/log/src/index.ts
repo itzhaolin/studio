@@ -13,18 +13,18 @@ class Logger {
   // default logger has an empty name
   public static default = new Logger("");
 
-  private _name: string;
+  #name: string;
 
   // all new loggers are created from the default logger
   private constructor(name: string) {
-    this._name = name;
+    this.#name = name;
     this.setLevel("debug");
     channels.set(name, this);
   }
 
   // fully qualified name for the logger
   public name(): string {
-    return this._name;
+    return this.#name;
   }
 
   /**
@@ -42,6 +42,22 @@ class Logger {
         return this.error !== noop;
     }
     return false;
+  }
+
+  /**
+   *
+   * @returns the current log level
+   */
+  public getLevel(): LogLevel {
+    if (this.debug !== noop) {
+      return "debug";
+    } else if (this.info !== noop) {
+      return "info";
+    } else if (this.warn !== noop) {
+      return "warn";
+    } else {
+      return "error";
+    }
   }
 
   /**
@@ -85,7 +101,7 @@ class Logger {
   // create a new logger under this logger's namespace
   public getLogger(name: string): Logger {
     const shortName = name.replace(/^.+\.(asar|webpack)[\\/\\]/, "").replace(/^(\.\.\/)+/, "");
-    const channelName = this._name.length > 0 ? `${this._name}.${shortName}` : shortName;
+    const channelName = this.#name.length > 0 ? `${this.#name}.${shortName}` : shortName;
     const existing = channels.get(channelName);
     if (existing) {
       return existing;

@@ -17,6 +17,7 @@ import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { MessageType, ULog } from "@foxglove/ulog";
 import { BlobReader } from "@foxglove/ulog/web";
 
+import { messageIdToTopic, messageDefinitionToRos, logLevelToRosout } from "./support";
 import {
   IIterableSource,
   IteratorResult,
@@ -24,7 +25,6 @@ import {
   MessageIteratorArgs,
   GetBackfillMessagesArgs,
 } from "../IIterableSource";
-import { messageIdToTopic, messageDefinitionToRos, logLevelToRosout } from "./support";
 
 type UlogOptions = { type: "file"; file: File };
 
@@ -34,28 +34,28 @@ const LOG_TOPIC = "Log";
 const log = Logger.getLogger(__filename);
 
 export class UlogIterableSource implements IIterableSource {
-  private options: UlogOptions;
-  private ulog?: ULog;
-  private start?: Time;
-  private end?: Time;
+  #options: UlogOptions;
+  #ulog?: ULog;
+  #start?: Time;
+  #end?: Time;
 
   public constructor(options: UlogOptions) {
-    this.options = options;
+    this.#options = options;
   }
 
   public async initialize(): Promise<Initalization> {
-    const file = this.options.file;
-    const bytes = this.options.file.size;
+    const file = this.#options.file;
+    const bytes = this.#options.file.size;
     log.debug(`initialize(${bytes} bytes)`);
 
     const startTime = performance.now();
-    this.ulog = new ULog(new BlobReader(file), { chunkSize: CHUNK_SIZE });
-    await this.ulog.open();
+    this.#ulog = new ULog(new BlobReader(file), { chunkSize: CHUNK_SIZE });
+    await this.#ulog.open();
     const durationMs = performance.now() - startTime;
     log.debug(`opened in ${durationMs.toFixed(2)}ms`);
 
-    const counts = this.ulog.dataMessageCounts()!;
-    const timeRange = this.ulog.timeRange() ?? [0n, 0n];
+    const counts = this.#ulog.dataMessageCounts()!;
+    const timeRange = this.#ulog.timeRange() ?? [0n, 0n];
     const start = fromMicros(Number(timeRange[0]));
     const end = fromMicros(Number(timeRange[1]));
 
@@ -65,10 +65,10 @@ export class UlogIterableSource implements IIterableSource {
     const datatypes: RosDatatypes = new Map();
     const messageDefinitionsByTopic: MessageDefinitionsByTopic = {};
     const parsedMessageDefinitionsByTopic: ParsedMessageDefinitionsByTopic = {};
-    const header = this.ulog.header!;
+    const header = this.#ulog.header!;
 
-    topics.push({ name: LOG_TOPIC, datatype: "rosgraph_msgs/Log" });
-    topicStats.set(LOG_TOPIC, { numMessages: this.ulog.logCount() ?? 0 });
+    topics.push({ name: LOG_TOPIC, schemaName: "rosgraph_msgs/Log" });
+    topicStats.set(LOG_TOPIC, { numMessages: this.#ulog.logCount() ?? 0 });
     datatypes.set("rosgraph_msgs/Log", ros1["rosgraph_msgs/Log"]);
 
     for (const msgDef of header.definitions.values()) {
@@ -76,21 +76,21 @@ export class UlogIterableSource implements IIterableSource {
     }
 
     const topicNames = new Set<string>();
-    for (const [msgId, msgDef] of this.ulog.subscriptions.entries()) {
+    for (const [msgId, msgDef] of this.#ulog.subscriptions.entries()) {
       const count = counts.get(msgId);
       if (count == undefined || count === 0) {
         continue;
       }
 
-      const name = messageIdToTopic(msgId, this.ulog);
+      const name = messageIdToTopic(msgId, this.#ulog);
       if (name && !topicNames.has(name)) {
         topicNames.add(name);
-        topics.push({ name, datatype: msgDef.name });
+        topics.push({ name, schemaName: msgDef.name });
         topicStats.set(name, { numMessages: count });
         messageDefinitionsByTopic[name] = msgDef.format;
-        const rosMsgDef = datatypes.get(msgDef.name);
-        if (rosMsgDef) {
-          parsedMessageDefinitionsByTopic[name] = [rosMsgDef];
+        const messageDefinition = datatypes.get(msgDef.name);
+        if (messageDefinition) {
+          parsedMessageDefinitionsByTopic[name] = [messageDefinition];
         }
       }
     }
@@ -102,8 +102,8 @@ export class UlogIterableSource implements IIterableSource {
 
     log.debug(`message definitions parsed`);
 
-    this.start = start;
-    this.end = end;
+    this.#start = start;
+    this.#end = end;
 
     return {
       start,
@@ -120,13 +120,13 @@ export class UlogIterableSource implements IIterableSource {
   public async *messageIterator(
     args: MessageIteratorArgs,
   ): AsyncIterableIterator<Readonly<IteratorResult>> {
-    if (this.ulog == undefined) {
+    if (this.#ulog == undefined) {
       throw new Error(`UlogDataProvider is not initialized`);
     }
 
     const topics = args.topics;
-    const start = args.start ?? this.start;
-    const end = args.end ?? this.end;
+    const start = args.start ?? this.#start;
+    const end = args.end ?? this.#end;
 
     if (!start || !end) {
       throw new Error(`UlogDataProvider is not initialized`);
@@ -139,27 +139,29 @@ export class UlogIterableSource implements IIterableSource {
     const startTime = BigInt(Math.floor(toMicroSec(start)));
     const endTime = BigInt(Math.floor(toMicroSec(end)));
 
-    for await (const msg of this.ulog.readMessages({ startTime, endTime })) {
+    for await (const msg of this.#ulog.readMessages({ startTime, endTime })) {
       if (msg.type === MessageType.Data) {
         const timestamp = (msg.value as { timestamp: bigint }).timestamp;
         const receiveTime = fromMicros(Number(timestamp));
-        const topic = messageIdToTopic(msg.msgId, this.ulog);
+        const sub = this.#ulog.subscriptions.get(msg.msgId);
+        const topic = sub?.name;
         if (topic && topics.includes(topic) && isTimeInRangeInclusive(receiveTime, start, end)) {
           yield {
+            type: "message-event",
             msgEvent: {
               topic,
               receiveTime,
               message: msg.value,
               sizeInBytes: msg.data.byteLength,
+              schemaName: sub.name,
             },
-            connectionId: undefined,
-            problem: undefined,
           };
         }
       } else if (msg.type === MessageType.Log || msg.type === MessageType.LogTagged) {
         const receiveTime = fromMicros(Number(msg.timestamp));
         if (topics.includes(LOG_TOPIC) && isTimeInRangeInclusive(receiveTime, start, end)) {
           yield {
+            type: "message-event",
             msgEvent: {
               topic: LOG_TOPIC,
               receiveTime,
@@ -172,19 +174,16 @@ export class UlogIterableSource implements IIterableSource {
                 msg: msg.message,
                 name: "",
               },
+              schemaName: "rosgraph_msgs/Log",
               sizeInBytes: msg.size,
             },
-            connectionId: undefined,
-            problem: undefined,
           };
         }
       }
     }
   }
 
-  public async getBackfillMessages(
-    _args: GetBackfillMessagesArgs,
-  ): Promise<MessageEvent<unknown>[]> {
+  public async getBackfillMessages(_args: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
     return [];
   }
 }

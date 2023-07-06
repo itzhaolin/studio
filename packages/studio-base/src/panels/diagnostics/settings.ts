@@ -21,7 +21,6 @@ export function buildSummarySettingsTree(
   return {
     general: {
       label: "General",
-      icon: "Settings",
       fields: {
         topicToRender: {
           label: "Topic",
@@ -30,7 +29,7 @@ export function buildSummarySettingsTree(
           error: topicError,
           options: topicOptions,
         },
-        sortByLevel: { label: "Sort By Level", input: "boolean", value: config.sortByLevel },
+        sortByLevel: { label: "Sort by level", input: "boolean", value: config.sortByLevel },
       },
     },
   };
@@ -38,6 +37,7 @@ export function buildSummarySettingsTree(
 
 export function buildStatusPanelSettingsTree(
   topicToRender: string,
+  numericPrecision: number | undefined,
   availableTopics: readonly string[],
 ): SettingsTreeNodes {
   const topicOptions = availableTopics.map((topic) => ({ label: topic, value: topic }));
@@ -50,7 +50,6 @@ export function buildStatusPanelSettingsTree(
   return {
     general: {
       label: "General",
-      icon: "Settings",
       fields: {
         topicToRender: {
           label: "Topic",
@@ -58,6 +57,16 @@ export function buildStatusPanelSettingsTree(
           value: topicToRender,
           error: topicError,
           options: topicOptions,
+        },
+        numericPrecision: {
+          label: "Numeric precision",
+          input: "number",
+          min: 0,
+          max: 17,
+          precision: 0,
+          step: 1,
+          placeholder: "auto",
+          value: numericPrecision,
         },
       },
     },

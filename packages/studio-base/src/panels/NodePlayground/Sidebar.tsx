@@ -24,14 +24,15 @@ import {
   IconButton,
   Tabs,
   Tab,
-  styled as muiStyled,
   Paper,
   CardHeader,
   Typography,
   Divider,
+  tabClasses,
 } from "@mui/material";
 import * as monacoApi from "monaco-editor/esm/vs/editor/editor.api";
 import { ReactNode, useCallback, useMemo } from "react";
+import { makeStyles } from "tss-react/mui";
 
 import Stack from "@foxglove/studio-base/components/Stack";
 import { Explorer } from "@foxglove/studio-base/panels/NodePlayground";
@@ -40,15 +41,18 @@ import { getNodeProjectConfig } from "@foxglove/studio-base/players/UserNodePlay
 import templates from "@foxglove/studio-base/players/UserNodePlayer/nodeTransformerWorker/typescript/templates";
 import { UserNodes } from "@foxglove/studio-base/types/panels";
 
-const STab = muiStyled(Tab)(({ theme }) => ({
-  minWidth: "auto",
-  padding: theme.spacing(1, 1.125),
-}));
-
-const ExplorerWrapper = muiStyled("div")(({ theme }) => ({
-  backgroundColor: theme.palette.grey[200],
-  width: 350,
-  overflow: "auto",
+const useStyles = makeStyles()((theme) => ({
+  tabs: {
+    [`.${tabClasses.root}`]: {
+      minWidth: "auto",
+      padding: theme.spacing(1, 1.125),
+    },
+  },
+  explorerWrapper: {
+    backgroundColor: theme.palette.background.paper,
+    width: 350,
+    overflow: "auto",
+  },
 }));
 
 type NodesListProps = {
@@ -69,7 +73,6 @@ const NodesList = ({ nodes, selectNode, deleteNode, collapse, selectedNodeId }: 
             <ListItem
               disablePadding
               key={nodeId}
-              selected={selectedNodeId === nodeId}
               secondaryAction={
                 <IconButton
                   size="small"
@@ -83,7 +86,10 @@ const NodesList = ({ nodes, selectNode, deleteNode, collapse, selectedNodeId }: 
                 </IconButton>
               }
             >
-              <ListItemButton onClick={() => selectNode(nodeId)}>
+              <ListItemButton
+                selected={selectedNodeId === nodeId}
+                onClick={() => selectNode(nodeId)}
+              >
                 <ListItemText
                   primary={nodes[nodeId]?.name}
                   primaryTypographyProps={{ variant: "body1" }}
@@ -150,6 +156,7 @@ const Sidebar = ({
   script,
   addNewNode,
 }: Props): React.ReactElement => {
+  const { classes } = useStyles();
   const nodesSelected = explorer === "nodes";
   const utilsSelected = explorer === "utils";
   const templatesSelected = explorer === "templates";
@@ -205,7 +212,7 @@ const Sidebar = ({
             collapse={() => updateExplorer(undefined)}
             title="Utilities"
             subheader={
-              <Typography variant="body2" color="text.secondary" component="div">
+              <Typography variant="body2" color="text.secondary">
                 You can import any of these modules into your script using the following syntax:{" "}
                 <pre>{`import { ... } from "./pointClouds.ts".`}</pre>
               </Typography>
@@ -277,8 +284,8 @@ const Sidebar = ({
   return (
     <Paper elevation={0}>
       <Stack direction="row" fullHeight>
-        <Tabs orientation="vertical" value={activeExplorerTab}>
-          <STab
+        <Tabs className={classes.tabs} orientation="vertical" value={activeExplorerTab}>
+          <Tab
             disableRipple
             value="nodes"
             title="Scripts"
@@ -286,7 +293,7 @@ const Sidebar = ({
             data-testid="node-explorer"
             onClick={() => updateExplorer(nodesSelected ? undefined : "nodes")}
           />
-          <STab
+          <Tab
             disableRipple
             value="utils"
             title="Utilities"
@@ -294,7 +301,7 @@ const Sidebar = ({
             data-testid="utils-explorer"
             onClick={() => updateExplorer(utilsSelected ? undefined : "utils")}
           />
-          <STab
+          <Tab
             disableRipple
             value="templates"
             title="Templates"
@@ -306,7 +313,7 @@ const Sidebar = ({
         {explorer != undefined && (
           <>
             <Divider flexItem orientation="vertical" />
-            <ExplorerWrapper>{explorers[explorer]}</ExplorerWrapper>
+            <div className={classes.explorerWrapper}>{explorers[explorer]}</div>
           </>
         )}
         <Divider flexItem orientation="vertical" />

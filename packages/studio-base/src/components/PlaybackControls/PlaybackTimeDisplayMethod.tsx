@@ -12,9 +12,12 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
-  styled as muiStyled,
+  filledInputClasses,
+  iconButtonClasses,
+  inputBaseClasses,
 } from "@mui/material";
-import { useState, useCallback, useMemo, useEffect, MouseEvent } from "react";
+import { useState, useCallback, useMemo, useEffect, MouseEvent, useRef } from "react";
+import { makeStyles } from "tss-react/mui";
 
 import { Time, isTimeInRangeInclusive } from "@foxglove/rostime";
 import Stack from "@foxglove/studio-base/components/Stack";
@@ -25,7 +28,6 @@ import {
   formatTime,
   getValidatedTimeAndMethodFromString,
 } from "@foxglove/studio-base/util/formatTime";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 import { formatTimeRaw } from "@foxglove/studio-base/util/time";
 
 type PlaybackTimeDisplayMethodProps = {
@@ -38,42 +40,50 @@ type PlaybackTimeDisplayMethodProps = {
   isPlaying: boolean;
 };
 
-const StyledTextField = muiStyled(TextField)<{ error?: boolean }>(({ error, theme }) => ({
-  borderRadius: theme.shape.borderRadius,
+const useStyles = makeStyles()((theme) => ({
+  textField: {
+    borderRadius: theme.shape.borderRadius,
 
-  "&.Mui-disabled": {
-    ".MuiFilledInput-root": {
+    "&.Mui-disabled": {
+      [`.${filledInputClasses.root}`]: {
+        backgroundColor: "transparent",
+      },
+    },
+    "&:not(.Mui-disabled):hover": {
+      backgroundColor: theme.palette.action.hover,
+
+      [`.${iconButtonClasses.root}`]: {
+        visibility: "visible",
+      },
+    },
+    [`.${filledInputClasses.root}`]: {
       backgroundColor: "transparent",
-    },
-  },
-  "&:not(.Mui-disabled):hover": {
-    backgroundColor: theme.palette.action.hover,
 
-    ".MuiIconButton-root": {
-      visibility: "visible",
+      ":hover": {
+        backgroundColor: "transparent",
+      },
+    },
+    [`.${inputBaseClasses.input}`]: {
+      fontFeatureSettings: `${theme.typography.fontFeatureSettings}, 'zero' !important`,
+      minWidth: "20ch",
+    },
+    [`.${iconButtonClasses.root}`]: {
+      borderTopLeftRadius: 0,
+      borderBottomLeftRadius: 0,
+      borderLeft: `1px solid ${theme.palette.background.paper}`,
+      visibility: "hidden",
+      marginRight: theme.spacing(-1),
     },
   },
-  ".MuiFilledInput-root": {
-    backgroundColor: "transparent",
-
-    ":hover": {
-      backgroundColor: "transparent",
-    },
-  },
-  ".MuiInputBase-input": {
-    fontFeatureSettings: `${fonts.SANS_SERIF_FEATURE_SETTINGS}, 'zero' !important`,
-    minWidth: "20ch",
-  },
-  ".MuiIconButton-root": {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    borderLeft: `1px solid ${theme.palette.background.paper}`,
-    visibility: "hidden",
-    marginRight: theme.spacing(-1),
-  },
-  ...(error === true && {
+  textFieldError: {
     outline: `1px solid ${theme.palette.error.main}`,
-  }),
+    outlineOffset: -1,
+
+    [`.${inputBaseClasses.root}`]: {
+      color: theme.palette.error.main,
+      borderLeftColor: theme.palette.error.main,
+    },
+  },
 }));
 
 function PlaybackTimeMethodMenu({
@@ -115,6 +125,7 @@ function PlaybackTimeMethodMenu({
         open={open}
         onClose={handleClose}
         MenuListProps={{
+          dense: true,
           "aria-labelledby": "playback-time-display-toggle-button",
         }}
         anchorOrigin={{
@@ -143,7 +154,7 @@ function PlaybackTimeMethodMenu({
             <ListItemText
               inset={timeFormat !== option.key}
               primary={option.label}
-              primaryTypographyProps={{ variant: "body2" }}
+              primaryTypographyProps={{ variant: "inherit" }}
             />
           </MenuItem>
         ))}
@@ -161,6 +172,8 @@ export default function PlaybackTimeDisplayMethod({
   onPause,
   isPlaying,
 }: PlaybackTimeDisplayMethodProps): JSX.Element {
+  const { classes, cx } = useStyles();
+  const timeOutID = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const timeFormat = useAppTimeFormat();
   const timeRawString = useMemo(
     () => (currentTime ? formatTimeRaw(currentTime) : undefined),
@@ -222,13 +235,20 @@ export default function PlaybackTimeDisplayMethod({
       setIsEditing(false);
       setHasError(false);
     }
+
+    return () => {
+      if (timeOutID.current != undefined) {
+        clearTimeout(timeOutID.current);
+      }
+    };
   }, [hasError, inputText, isPlaying]);
 
   return (
     <Stack direction="row" alignItems="center" flexGrow={0} gap={0.5}>
       {currentTime ? (
         <form onSubmit={onSubmit} style={{ width: "100%" }}>
-          <StyledTextField
+          <TextField
+            className={cx(classes.textField, { [classes.textFieldError]: hasError })}
             aria-label="Playback Time Method"
             data-testid="PlaybackTime-text"
             value={isEditing ? inputText : currentTimeString}
@@ -260,14 +280,14 @@ export default function PlaybackTimeDisplayMethod({
             onBlur={(e) => {
               onSubmit(e);
               setIsEditing(false);
-              setTimeout(() => setHasError(false), 600);
+              timeOutID.current = setTimeout(() => setHasError(false), 600);
             }}
             onChange={(event) => setInputText(event.target.value)}
           />
         </form>
       ) : (
-        <StyledTextField
-          className="Mui-disabled"
+        <TextField
+          className={cx(classes.textField, "Mui-disabled")}
           disabled
           variant="filled"
           size="small"

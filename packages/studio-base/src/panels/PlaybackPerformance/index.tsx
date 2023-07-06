@@ -16,14 +16,13 @@ import { last, sumBy } from "lodash";
 import { ReactElement } from "react";
 
 import { subtract as subtractTimes, toSec } from "@foxglove/rostime";
+import { Immutable } from "@foxglove/studio";
 import { useMessagePipeline } from "@foxglove/studio-base/components/MessagePipeline";
 import Panel from "@foxglove/studio-base/components/Panel";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
 import { Sparkline, SparklinePoint } from "@foxglove/studio-base/components/Sparkline";
 import Stack from "@foxglove/studio-base/components/Stack";
 import { PlayerStateActiveData } from "@foxglove/studio-base/players/types";
-
-import helpContent from "./index.help.md";
 
 const TIME_RANGE = 5000;
 
@@ -57,19 +56,18 @@ function PlaybackPerformanceItem(props: PlaybackPerformanceItemProps): ReactElem
   );
 }
 
-export type UnconnectedPlaybackPerformanceProps = {
-  readonly timestamp: number;
-  readonly activeData?: PlayerStateActiveData;
-};
+export type UnconnectedPlaybackPerformanceProps = Immutable<{
+  timestamp: number;
+  activeData?: PlayerStateActiveData;
+}>;
 
 // Exported for stories
 export function UnconnectedPlaybackPerformance({
   timestamp,
   activeData,
 }: UnconnectedPlaybackPerformanceProps): JSX.Element {
-  const playbackInfo = React.useRef<
-    { timestamp: number; activeData: PlayerStateActiveData } | undefined
-  >();
+  const playbackInfo =
+    React.useRef<Immutable<{ timestamp: number; activeData: PlayerStateActiveData } | undefined>>();
   const lastPlaybackInfo = playbackInfo.current;
   if (activeData && (!playbackInfo.current || playbackInfo.current.activeData !== activeData)) {
     playbackInfo.current = { timestamp, activeData };
@@ -121,7 +119,7 @@ export function UnconnectedPlaybackPerformance({
 
   return (
     <Stack flex="auto">
-      <PanelToolbar helpContent={helpContent} />
+      <PanelToolbar />
       <Stack flex="auto" justifyContent="center" gap={2} padding={1}>
         <PlaybackPerformanceItem
           points={perfPoints.current.speed}

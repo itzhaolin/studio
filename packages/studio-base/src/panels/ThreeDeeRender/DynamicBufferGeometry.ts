@@ -15,55 +15,66 @@ interface TypedArrayConstructor<T extends TypedArray> {
   new (length: number): T;
 }
 
-export type DynamicFloatBufferGeometry = DynamicBufferGeometry<
-  Float32Array,
-  Float32ArrayConstructor
->;
+interface ArrayConstructor {
+  new (length: number): ArrayLike<number>;
+}
 
-export class DynamicBufferGeometry<
-  T extends TypedArray,
-  C extends TypedArrayConstructor<T>,
-> extends THREE.BufferGeometry {
+export class DynamicBufferGeometry extends THREE.BufferGeometry {
   public override attributes: { [name: string]: THREE.BufferAttribute } = {};
 
-  private _dataConstructor: C;
-  private _usage: THREE.Usage;
-  private _itemCapacity = 0;
+  #attributeConstructors = new Map<string, ArrayConstructor>();
+  #usage: THREE.Usage;
+  #itemCapacity = 0;
 
-  public constructor(arrayConstructor: C, usage: THREE.Usage = THREE.DynamicDrawUsage) {
+  public constructor(usage: THREE.Usage = THREE.DynamicDrawUsage) {
     super();
-    this._dataConstructor = arrayConstructor;
-    this._usage = usage;
+    this.#usage = usage;
   }
 
-  public createAttribute(
+  public setUsage(usage: THREE.Usage): void {
+    this.#usage = usage;
+    for (const attribute of Object.values(this.attributes)) {
+      attribute.setUsage(usage);
+    }
+  }
+
+  public createAttribute<T extends TypedArray, C extends TypedArrayConstructor<T>>(
     name: THREE.BuiltinShaderAttributeName | string,
+    arrayConstructor: C,
     itemSize: number,
+    // eslint-disable-next-line @foxglove/no-boolean-parameters
+    normalized?: boolean,
   ): THREE.BufferGeometry {
-    const data = new this._dataConstructor(this._itemCapacity * itemSize);
-    const attribute = new THREE.BufferAttribute(data, itemSize);
-    attribute.setUsage(this._usage);
+    const data = new arrayConstructor(this.#itemCapacity * itemSize);
+    const attribute = new THREE.BufferAttribute(data, itemSize, normalized);
+    attribute.setUsage(this.#usage);
+    this.#attributeConstructors.set(name, arrayConstructor);
     return this.setAttribute(name, attribute);
   }
 
   public resize(itemCount: number): void {
     this.setDrawRange(0, itemCount);
 
-    if (itemCount <= this._itemCapacity) {
+    if (itemCount <= this.#itemCapacity) {
       for (const attribute of Object.values(this.attributes)) {
         attribute.count = itemCount;
       }
       return;
     }
 
-    for (const attributeName of Object.keys(this.attributes)) {
-      const attribute = this.attributes[attributeName]!;
-      const data = new this._dataConstructor(itemCount * attribute.itemSize);
+    for (const [attributeName, attribute] of Object.entries(this.attributes)) {
+      const dataConstructor = this.#attributeConstructors.get(attributeName);
+      if (!dataConstructor) {
+        throw new Error(
+          `DynamicBufferGeometry resize(${itemCount}) failed, missing data constructor for attribute "${attributeName}". Attributes must be created using createAttribute().`,
+        );
+      }
+      const data = new dataConstructor(itemCount * attribute.itemSize);
       const newAttrib = new THREE.BufferAttribute(data, attribute.itemSize, attribute.normalized);
-      newAttrib.setUsage(this._usage);
+      newAttrib.setUsage(this.#usage);
       this.setAttribute(attributeName, newAttrib);
     }
 
-    this._itemCapacity = itemCount;
+    this.#itemCapacity = itemCount;
   }
 }

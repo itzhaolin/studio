@@ -2,12 +2,10 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import decompressLZ4 from "wasm-lz4";
-
 import { Bag, Filelike } from "@foxglove/rosbag";
 import { BlobReader } from "@foxglove/rosbag/web";
 import { parse as parseMessageDefinition } from "@foxglove/rosmsg";
-import { LazyMessageReader } from "@foxglove/rosmsg-serialization";
+import { MessageReader } from "@foxglove/rosmsg-serialization";
 import { compare } from "@foxglove/rostime";
 import {
   PlayerProblem,
@@ -20,6 +18,7 @@ import BrowserHttpReader from "@foxglove/studio-base/util/BrowserHttpReader";
 import CachedFilelike from "@foxglove/studio-base/util/CachedFilelike";
 import { getBagChunksOverlapCount } from "@foxglove/studio-base/util/bags";
 import Bzip2 from "@foxglove/wasm-bz2";
+import decompressLZ4 from "@foxglove/wasm-lz4";
 
 import {
   IIterableSource,
@@ -32,12 +31,14 @@ import {
 type BagSource = { type: "file"; file: File } | { type: "remote"; url: string };
 
 export class BagIterableSource implements IIterableSource {
-  private _source: BagSource;
-  private _bag: Bag | undefined;
-  private _readersByConnectionId = new Map<number, LazyMessageReader>();
+  readonly #source: BagSource;
+
+  #bag: Bag | undefined;
+  #readersByConnectionId = new Map<number, MessageReader>();
+  #datatypesByConnectionId = new Map<number, string>();
 
   public constructor(source: BagSource) {
-    this._source = source;
+    this.#source = source;
   }
 
   public async initialize(): Promise<Initalization> {
@@ -45,8 +46,8 @@ export class BagIterableSource implements IIterableSource {
     const bzip2 = await Bzip2.init();
 
     let fileLike: Filelike | undefined;
-    if (this._source.type === "remote") {
-      const bagUrl = this._source.url;
+    if (this.#source.type === "remote") {
+      const bagUrl = this.#source.url;
       const fileReader = new BrowserHttpReader(bagUrl);
       const remoteReader = new CachedFilelike({
         fileReader,
@@ -61,10 +62,10 @@ export class BagIterableSource implements IIterableSource {
 
       fileLike = remoteReader;
     } else {
-      fileLike = new BlobReader(this._source.file);
+      fileLike = new BlobReader(this.#source.file);
     }
 
-    this._bag = new Bag(fileLike, {
+    this.#bag = new Bag(fileLike, {
       parse: false,
       decompress: {
         bz2: (buffer: Uint8Array, size: number) => {
@@ -76,15 +77,17 @@ export class BagIterableSource implements IIterableSource {
       },
     });
 
-    await this._bag.open();
+    await this.#bag.open();
 
     const problems: PlayerProblem[] = [];
-    const chunksOverlapCount = getBagChunksOverlapCount(this._bag.chunkInfos);
+    const chunksOverlapCount = getBagChunksOverlapCount(this.#bag.chunkInfos);
     // If >25% of the chunks overlap, show a warning. It's common for a small number of chunks to overlap
     // since it looks like `rosbag record` has a bit of a race condition, and that's not too terrible, so
     // only warn when there's a more serious slowdown.
-    if (chunksOverlapCount > this._bag.chunkInfos.length * 0.25) {
-      const message = `This bag has many overlapping chunks (${chunksOverlapCount} out of ${this._bag.chunkInfos.length}). This results in more memory use during playback.`;
+    if (chunksOverlapCount > this.#bag.chunkInfos.length * 0.25) {
+      const message = `This bag has many overlapping chunks (${chunksOverlapCount} out of ${
+        this.#bag.chunkInfos.length
+      }). This results in more memory use during playback.`;
       const tip = "Re-sort the messages in your bag by receive time.";
       problems.push({
         severity: "warn",
@@ -93,8 +96,8 @@ export class BagIterableSource implements IIterableSource {
       });
     }
 
-    const numMessagesByConnectionIndex: number[] = new Array(this._bag.connections.size).fill(0);
-    this._bag.chunkInfos.forEach((info) => {
+    const numMessagesByConnectionIndex: number[] = new Array(this.#bag.connections.size).fill(0);
+    this.#bag.chunkInfos.forEach((info) => {
       info.connections.forEach(({ conn, count }) => {
         numMessagesByConnectionIndex[conn] += count;
       });
@@ -104,9 +107,9 @@ export class BagIterableSource implements IIterableSource {
     const topics = new Map<string, Topic>();
     const topicStats = new Map<string, TopicStats>();
     const publishersByTopic: Initalization["publishersByTopic"] = new Map();
-    for (const [id, connection] of this._bag.connections) {
-      const datatype = connection.type;
-      if (!datatype) {
+    for (const [id, connection] of this.#bag.connections) {
+      const schemaName = connection.type;
+      if (!schemaName) {
         continue;
       }
 
@@ -118,16 +121,16 @@ export class BagIterableSource implements IIterableSource {
       publishers.add(connection.callerid ?? String(connection.conn));
 
       const existingTopic = topics.get(connection.topic);
-      if (existingTopic && existingTopic.datatype !== datatype) {
+      if (existingTopic && existingTopic.schemaName !== schemaName) {
         problems.push({
           severity: "warn",
-          message: `Conflicting datatypes on topic (${connection.topic}): ${datatype}, ${existingTopic.datatype}`,
+          message: `Conflicting datatypes on topic (${connection.topic}): ${schemaName}, ${existingTopic.schemaName}`,
           tip: `Studio requires all connections on a topic to have the same datatype. Make sure all your nodes are publishing the same message on ${connection.topic}.`,
         });
       }
 
       if (!existingTopic) {
-        topics.set(connection.topic, { name: connection.topic, datatype });
+        topics.set(connection.topic, { name: connection.topic, schemaName });
       }
 
       // Update the message count for this topic
@@ -137,14 +140,15 @@ export class BagIterableSource implements IIterableSource {
       topicStats.set(connection.topic, { numMessages });
 
       const parsedDefinition = parseMessageDefinition(connection.messageDefinition);
-      const reader = new LazyMessageReader(parsedDefinition);
-      this._readersByConnectionId.set(id, reader);
+      const reader = new MessageReader(parsedDefinition);
+      this.#readersByConnectionId.set(id, reader);
+      this.#datatypesByConnectionId.set(id, schemaName);
 
       for (const definition of parsedDefinition) {
         // In parsed definitions, the first definition (root) does not have a name as is meant to
         // be the datatype of the topic.
         if (!definition.name) {
-          datatypes.set(datatype, definition);
+          datatypes.set(schemaName, definition);
         } else {
           datatypes.set(definition.name, definition);
         }
@@ -154,8 +158,8 @@ export class BagIterableSource implements IIterableSource {
     return {
       topics: Array.from(topics.values()),
       topicStats,
-      start: this._bag.startTime ?? { sec: 0, nsec: 0 },
-      end: this._bag.endTime ?? { sec: 0, nsec: 0 },
+      start: this.#bag.startTime ?? { sec: 0, nsec: 0 },
+      end: this.#bag.endTime ?? { sec: 0, nsec: 0 },
       problems,
       profile: "ros1",
       datatypes,
@@ -166,25 +170,25 @@ export class BagIterableSource implements IIterableSource {
   public async *messageIterator(
     opt: MessageIteratorArgs,
   ): AsyncIterableIterator<Readonly<IteratorResult>> {
-    yield* this._messageIterator({ ...opt, reverse: false });
+    yield* this.#messageIterator({ ...opt, reverse: false });
   }
 
-  private async *_messageIterator(
+  async *#messageIterator(
     opt: MessageIteratorArgs & { reverse: boolean },
   ): AsyncGenerator<Readonly<IteratorResult>> {
-    if (!this._bag) {
+    if (!this.#bag) {
       throw new Error("Invariant: uninitialized");
     }
 
     const end = opt.end;
 
-    const iterator = this._bag.messageIterator({
+    const iterator = this.#bag.messageIterator({
       topics: opt.topics,
       reverse: opt.reverse,
       start: opt.start,
     });
 
-    const readersByConnectionId = this._readersByConnectionId;
+    const readersByConnectionId = this.#readersByConnectionId;
     for await (const bagMsgEvent of iterator) {
       const connectionId = bagMsgEvent.connectionId;
       const reader = readersByConnectionId.get(connectionId);
@@ -193,23 +197,42 @@ export class BagIterableSource implements IIterableSource {
         return;
       }
 
+      const schemaName = this.#datatypesByConnectionId.get(connectionId);
+      if (!schemaName) {
+        yield {
+          type: "problem",
+          connectionId,
+          problem: {
+            severity: "error",
+            message: `Cannot missing datatype for connection id ${connectionId}`,
+            tip: `Check that your bag file is well-formed. It should have a connection record for every connection id referenced from a message record.`,
+          },
+        };
+        return;
+      }
+
       if (reader) {
-        const parsedMessage = reader.readMessage(bagMsgEvent.data);
+        // bagMsgEvent.data is a view on top of the entire chunk. To avoid keeping references for
+        // chunks (which will fill up memory space when we cache messages) when make a copy of the
+        // data.
+        const dataCopy = bagMsgEvent.data.slice();
+        const parsedMessage = reader.readMessage(dataCopy);
 
         yield {
+          type: "message-event",
           connectionId,
-          problem: undefined,
           msgEvent: {
             topic: bagMsgEvent.topic,
             receiveTime: bagMsgEvent.timestamp,
             sizeInBytes: bagMsgEvent.data.byteLength,
             message: parsedMessage,
+            schemaName,
           },
         };
       } else {
         yield {
+          type: "problem",
           connectionId,
-          msgEvent: undefined,
           problem: {
             severity: "error",
             message: `Cannot deserialize message for missing connection id ${connectionId}`,
@@ -223,18 +246,18 @@ export class BagIterableSource implements IIterableSource {
   public async getBackfillMessages({
     topics,
     time,
-  }: GetBackfillMessagesArgs): Promise<MessageEvent<unknown>[]> {
-    const messages: MessageEvent<unknown>[] = [];
+  }: GetBackfillMessagesArgs): Promise<MessageEvent[]> {
+    const messages: MessageEvent[] = [];
     for (const topic of topics) {
       // NOTE: An iterator is made for each topic to get the latest message on that topic.
       // An single iterator for all the topics could result in iterating through many
       // irrelevant messages to get to an older message on a topic.
-      for await (const result of this._messageIterator({
+      for await (const result of this.#messageIterator({
         topics: [topic],
         start: time,
         reverse: true,
       })) {
-        if (result.msgEvent) {
+        if (result.type === "message-event") {
           messages.push(result.msgEvent);
         }
         break;

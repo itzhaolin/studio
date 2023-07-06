@@ -9,8 +9,11 @@ import { PoseInFrame } from "@foxglove/schemas";
 import { SettingsTreeAction, SettingsTreeFields } from "@foxglove/studio";
 import type { RosValue } from "@foxglove/studio-base/players/types";
 
+import { Axis, AXIS_LENGTH } from "./Axis";
+import { RenderableArrow } from "./markers/RenderableArrow";
+import { RenderableSphere } from "./markers/RenderableSphere";
+import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
 import { BaseUserData, Renderable } from "../Renderable";
-import { Renderer } from "../Renderer";
 import { PartialMessage, PartialMessageEvent, SceneExtension } from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import { makeRgba, rgbaToCssString, stringToRgba } from "../color";
@@ -35,10 +38,8 @@ import {
   ColorRGBA,
 } from "../ros";
 import { BaseSettings, PRECISION_DISTANCE } from "../settings";
+import { topicIsConvertibleToSchema } from "../topicIsConvertibleToSchema";
 import { makePose } from "../transforms";
-import { Axis, AXIS_LENGTH } from "./Axis";
-import { RenderableArrow } from "./markers/RenderableArrow";
-import { RenderableSphere } from "./markers/RenderableSphere";
 
 type DisplayType = "axis" | "arrow";
 
@@ -100,15 +101,28 @@ export class PoseRenderable extends Renderable<PoseUserData> {
 }
 
 export class Poses extends SceneExtension<PoseRenderable> {
-  public constructor(renderer: Renderer) {
+  public constructor(renderer: IRenderer) {
     super("foxglove.Poses", renderer);
+  }
 
-    renderer.addDatatypeSubscriptions(POSE_STAMPED_DATATYPES, this.handlePoseStamped);
-    renderer.addDatatypeSubscriptions(POSE_IN_FRAME_DATATYPES, this.handlePoseInFrame);
-    renderer.addDatatypeSubscriptions(
-      POSE_WITH_COVARIANCE_STAMPED_DATATYPES,
-      this.handlePoseWithCovariance,
-    );
+  public override getSubscriptions(): readonly AnyRendererSubscription[] {
+    return [
+      {
+        type: "schema",
+        schemaNames: POSE_STAMPED_DATATYPES,
+        subscription: { handler: this.#handlePoseStamped },
+      },
+      {
+        type: "schema",
+        schemaNames: POSE_IN_FRAME_DATATYPES,
+        subscription: { handler: this.#handlePoseInFrame },
+      },
+      {
+        type: "schema",
+        schemaNames: POSE_WITH_COVARIANCE_STAMPED_DATATYPES,
+        subscription: { handler: this.#handlePoseWithCovariance },
+      },
+    ];
   }
 
   public override settingsNodes(): SettingsTreeEntry[] {
@@ -116,73 +130,74 @@ export class Poses extends SceneExtension<PoseRenderable> {
     const handler = this.handleSettingsAction;
     const entries: SettingsTreeEntry[] = [];
     for (const topic of this.renderer.topics ?? []) {
-      const isPoseStamped = POSE_STAMPED_DATATYPES.has(topic.datatype);
-      const isPoseInFrame = POSE_IN_FRAME_DATATYPES.has(topic.datatype);
+      const isPoseStamped = topicIsConvertibleToSchema(topic, POSE_STAMPED_DATATYPES);
+      const isPoseInFrame = topicIsConvertibleToSchema(topic, POSE_IN_FRAME_DATATYPES);
       const isPoseWithCovarianceStamped = isPoseStamped
         ? false
-        : POSE_WITH_COVARIANCE_STAMPED_DATATYPES.has(topic.datatype);
-      if (isPoseStamped || isPoseWithCovarianceStamped || isPoseInFrame) {
-        const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPose>;
-        const type = config.type ?? DEFAULT_TYPE;
-
-        const fields: SettingsTreeFields = {
-          type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: type },
-        };
-        if (type === "axis") {
-          fields["axisScale"] = {
-            label: "Scale",
-            input: "number",
-            step: 0.5,
-            min: 0,
-            precision: PRECISION_DISTANCE,
-            value: config.axisScale ?? DEFAULT_AXIS_SCALE,
-          };
-        } else {
-          fields["arrowScale"] = {
-            label: "Scale",
-            input: "vec3",
-            labels: ["X", "Y", "Z"],
-            step: 0.5,
-            precision: PRECISION_DISTANCE,
-            value: config.arrowScale ?? DEFAULT_ARROW_SCALE,
-          };
-          fields["color"] = {
-            label: "Color",
-            input: "rgba",
-            value: config.color ?? DEFAULT_COLOR_STR,
-          };
-        }
-
-        if (isPoseWithCovarianceStamped) {
-          const showCovariance = config.showCovariance ?? DEFAULT_SHOW_COVARIANCE;
-          const covarianceColor = config.covarianceColor ?? DEFAULT_COVARIANCE_COLOR_STR;
-
-          fields["showCovariance"] = {
-            label: "Covariance",
-            input: "boolean",
-            value: showCovariance,
-          };
-          if (showCovariance) {
-            fields["covarianceColor"] = {
-              label: "Covariance Color",
-              input: "rgba",
-              value: covarianceColor,
-            };
-          }
-        }
-
-        entries.push({
-          path: ["topics", topic.name],
-          node: {
-            label: topic.name,
-            icon: "Flag",
-            fields,
-            visible: config.visible ?? DEFAULT_SETTINGS.visible,
-            order: topic.name.toLocaleLowerCase(),
-            handler,
-          },
-        });
+        : topicIsConvertibleToSchema(topic, POSE_WITH_COVARIANCE_STAMPED_DATATYPES);
+      if (!(isPoseStamped || isPoseWithCovarianceStamped || isPoseInFrame)) {
+        continue;
       }
+      const config = (configTopics[topic.name] ?? {}) as Partial<LayerSettingsPose>;
+      const type = config.type ?? DEFAULT_TYPE;
+
+      const fields: SettingsTreeFields = {
+        type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: type },
+      };
+      if (type === "axis") {
+        fields["axisScale"] = {
+          label: "Scale",
+          input: "number",
+          step: 0.5,
+          min: 0,
+          precision: PRECISION_DISTANCE,
+          value: config.axisScale ?? DEFAULT_AXIS_SCALE,
+        };
+      } else {
+        fields["arrowScale"] = {
+          label: "Scale",
+          input: "vec3",
+          labels: ["X", "Y", "Z"],
+          step: 0.5,
+          precision: PRECISION_DISTANCE,
+          value: config.arrowScale ?? DEFAULT_ARROW_SCALE,
+        };
+        fields["color"] = {
+          label: "Color",
+          input: "rgba",
+          value: config.color ?? DEFAULT_COLOR_STR,
+        };
+      }
+
+      if (isPoseWithCovarianceStamped) {
+        const showCovariance = config.showCovariance ?? DEFAULT_SHOW_COVARIANCE;
+        const covarianceColor = config.covarianceColor ?? DEFAULT_COVARIANCE_COLOR_STR;
+
+        fields["showCovariance"] = {
+          label: "Covariance",
+          input: "boolean",
+          value: showCovariance,
+        };
+        if (showCovariance) {
+          fields["covarianceColor"] = {
+            label: "Covariance Color",
+            input: "rgba",
+            value: covarianceColor,
+          };
+        }
+      }
+
+      entries.push({
+        path: ["topics", topic.name],
+        node: {
+          label: topic.name,
+          icon: "Flag",
+          fields,
+          visible: config.visible ?? DEFAULT_SETTINGS.visible,
+          order: topic.name.toLocaleLowerCase(),
+          handler,
+        },
+      });
     }
     return entries;
   }
@@ -202,7 +217,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
       const settings = this.renderer.config.topics[topicName] as
         | Partial<LayerSettingsPose>
         | undefined;
-      this._updatePoseRenderable(
+      this.#updatePoseRenderable(
         renderable,
         renderable.userData.poseMessage,
         renderable.userData.originalMessage,
@@ -212,27 +227,27 @@ export class Poses extends SceneExtension<PoseRenderable> {
     }
   };
 
-  private handlePoseStamped = (messageEvent: PartialMessageEvent<PoseStamped>): void => {
+  #handlePoseStamped = (messageEvent: PartialMessageEvent<PoseStamped>): void => {
     const poseMessage = normalizePoseStamped(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
+    this.#addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
   };
 
-  private handlePoseInFrame = (messageEvent: PartialMessageEvent<PoseInFrame>): void => {
+  #handlePoseInFrame = (messageEvent: PartialMessageEvent<PoseInFrame>): void => {
     const poseMessage = normalizePoseInFrameToPoseStamped(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
+    this.#addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
   };
 
-  private handlePoseWithCovariance = (
+  #handlePoseWithCovariance = (
     messageEvent: PartialMessageEvent<PoseWithCovarianceStamped>,
   ): void => {
     const poseMessage = normalizePoseWithCovarianceStamped(messageEvent.message);
     const receiveTime = toNanoSec(messageEvent.receiveTime);
-    this.addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
+    this.#addPose(messageEvent.topic, poseMessage, messageEvent.message, receiveTime);
   };
 
-  private addPose(
+  #addPose(
     topic: string,
     poseMessage: PoseStamped | PoseWithCovarianceStamped,
     originalMessage: Record<string, RosValue>,
@@ -265,7 +280,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
       this.renderables.set(topic, renderable);
     }
 
-    this._updatePoseRenderable(
+    this.#updatePoseRenderable(
       renderable,
       poseMessage,
       originalMessage,
@@ -274,7 +289,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
     );
   }
 
-  private _updatePoseRenderable(
+  #updatePoseRenderable(
     renderable: PoseRenderable,
     poseMessage: PoseStamped | PoseWithCovarianceStamped,
     originalMessage: Record<string, RosValue>,

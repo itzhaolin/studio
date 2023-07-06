@@ -2,10 +2,11 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { EventNames, EventListener } from "eventemitter3";
+import EventEmitter from "eventemitter3";
 
-import { PanelsState } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
-import { Layout, LayoutID, LayoutPermission } from "@foxglove/studio-base/services/ILayoutStorage";
+import { LayoutID } from "@foxglove/studio-base/context/CurrentLayoutContext";
+import { LayoutData } from "@foxglove/studio-base/context/CurrentLayoutContext/actions";
+import { Layout, LayoutPermission } from "@foxglove/studio-base/services/ILayoutStorage";
 
 export type LayoutManagerChangeEvent =
   | { type: "delete"; updatedLayout?: undefined; layoutId: LayoutID }
@@ -56,13 +57,13 @@ export interface ILayoutManager {
    */
   setError(error: undefined | Error): void;
 
-  on<E extends EventNames<LayoutManagerEventTypes>>(
+  on<E extends EventEmitter.EventNames<LayoutManagerEventTypes>>(
     name: E,
-    listener: EventListener<LayoutManagerEventTypes, E>,
+    listener: EventEmitter.EventListener<LayoutManagerEventTypes, E>,
   ): void;
-  off<E extends EventNames<LayoutManagerEventTypes>>(
+  off<E extends EventEmitter.EventNames<LayoutManagerEventTypes>>(
     name: E,
-    listener: EventListener<LayoutManagerEventTypes, E>,
+    listener: EventEmitter.EventListener<LayoutManagerEventTypes, E>,
   ): void;
 
   getLayouts(): Promise<readonly Layout[]>;
@@ -71,7 +72,7 @@ export interface ILayoutManager {
 
   saveNewLayout(params: {
     name: string;
-    data: PanelsState;
+    data: LayoutData;
     permission: LayoutPermission;
   }): Promise<Layout>;
 
@@ -81,7 +82,7 @@ export interface ILayoutManager {
    * @note If the layout has not been edited before, the returned layout's id may be different from
    * the input id.
    */
-  updateLayout(params: { id: LayoutID; name?: string; data?: PanelsState }): Promise<Layout>;
+  updateLayout(params: { id: LayoutID; name?: string; data?: LayoutData }): Promise<Layout>;
 
   deleteLayout(params: { id: LayoutID }): Promise<void>;
 

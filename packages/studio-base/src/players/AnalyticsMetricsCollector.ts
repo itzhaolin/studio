@@ -15,30 +15,24 @@ const log = Log.getLogger(__filename);
 type EventData = { [key: string]: string | number | boolean };
 
 export default class AnalyticsMetricsCollector implements PlayerMetricsCollectorInterface {
-  private metadata: EventData = {};
-  private _analytics: IAnalytics;
+  #metadata: EventData = {};
+  #analytics: IAnalytics;
 
   public constructor(analytics: IAnalytics) {
     log.debug("New AnalyticsMetricsCollector");
-    this._analytics = analytics;
+    this.#analytics = analytics;
   }
 
   public setProperty(key: string, value: string | number | boolean): void {
-    this.metadata[key] = value;
+    this.#metadata[key] = value;
   }
 
   public logEvent(event: AppEvent, data?: EventData): void {
-    void this._analytics.logEvent(event, { ...this.metadata, ...data });
+    void this.#analytics.logEvent(event, { ...this.#metadata, ...data });
   }
 
   public playerConstructed(): void {
     this.logEvent(AppEvent.PLAYER_CONSTRUCTED);
-  }
-
-  public initialized(args?: { isSampleDataSource: boolean }): void {
-    this.logEvent(AppEvent.PLAYER_INITIALIZED, {
-      isSampleDataSource: args?.isSampleDataSource === true,
-    });
   }
 
   public play(speed: number): void {

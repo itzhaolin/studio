@@ -5,7 +5,7 @@
 import { transform } from "lodash";
 
 import { filterMap } from "@foxglove/den/collection";
-import { SettingsTreeFields, SettingsTreeNodes } from "@foxglove/studio";
+import { SettingsTreeFields, SettingsTreeNodes, Topic } from "@foxglove/studio";
 
 // Persisted panel state
 export type Config = {
@@ -16,6 +16,7 @@ export type Config = {
   layer: string;
   topicColors: Record<string, string>;
   zoomLevel?: number;
+  maxNativeZoom?: number;
 };
 
 export function validateCustomUrl(url: string): Error | undefined {
@@ -30,18 +31,32 @@ export function validateCustomUrl(url: string): Error | undefined {
   return undefined;
 }
 
-export function buildSettingsTree(config: Config, eligibleTopics: string[]): SettingsTreeNodes {
+function isGeoJSONSchema(schemaName: string) {
+  switch (schemaName) {
+    case "foxglove_msgs/GeoJSON":
+    case "foxglove_msgs/msg/GeoJSON":
+    case "foxglove.GeoJSON":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function buildSettingsTree(
+  config: Config,
+  eligibleTopics: Omit<Topic, "datatype">[],
+): SettingsTreeNodes {
   const topics: SettingsTreeNodes = transform(
     eligibleTopics,
     (result, topic) => {
-      const coloring = config.topicColors[topic];
-      result[topic] = {
-        label: topic,
+      const coloring = config.topicColors[topic.name];
+      result[topic.name] = {
+        label: topic.name,
         fields: {
           enabled: {
             label: "Enabled",
             input: "boolean",
-            value: !config.disabledTopics.includes(topic),
+            value: !config.disabledTopics.includes(topic.name),
           },
           coloring: {
             label: "Coloring",
@@ -66,12 +81,14 @@ export function buildSettingsTree(config: Config, eligibleTopics: string[]): Set
   );
 
   const eligibleFollowTopicOptions = filterMap(eligibleTopics, (topic) =>
-    config.disabledTopics.includes(topic) ? undefined : { label: topic, value: topic },
+    config.disabledTopics.includes(topic.name) || isGeoJSONSchema(topic.schemaName)
+      ? undefined
+      : { label: topic.name, value: topic.name },
   );
   const followTopicOptions = [{ label: "Off", value: "" }, ...eligibleFollowTopicOptions];
   const generalSettings: SettingsTreeFields = {
     layer: {
-      label: "Tile Layer",
+      label: "Tile layer",
       input: "select",
       value: config.layer,
       options: [
@@ -95,6 +112,16 @@ export function buildSettingsTree(config: Config, eligibleTopics: string[]): Set
       value: config.customTileUrl,
       error,
     };
+
+    generalSettings.maxNativeZoom = {
+      label: "Max tile level",
+      input: "select",
+      value: config.maxNativeZoom,
+      options: [18, 19, 20, 21, 22, 23, 24].map((num) => {
+        return { label: String(num), value: num };
+      }),
+      help: "Highest zoom supported by the custom map source. See https://leafletjs.com/examples/zoom-levels/ for more information.",
+    };
   }
 
   generalSettings.followTopic = {
@@ -107,7 +134,6 @@ export function buildSettingsTree(config: Config, eligibleTopics: string[]): Set
   const settings: SettingsTreeNodes = {
     general: {
       label: "General",
-      icon: "Settings",
       fields: generalSettings,
     },
     topics: {
