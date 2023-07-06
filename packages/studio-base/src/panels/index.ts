@@ -174,6 +174,13 @@ export const getBuiltin: (t: TFunction<"panels">) => PanelInfo[] = (t) => [
     module: async () => await import("./Tab"),
     hasCustomToolbar: true,
   },
+  {
+    title: "Service",
+    type: "Service",
+    description: "Service Panel",
+    thumbnail: dataSourceInfoThumbnail,
+    module: async () => await import("./Service"),
+  },
 ];
 
 export const getDebug: (t: TFunction<"panels">) => PanelInfo[] = (t) => [

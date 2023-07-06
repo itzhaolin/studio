@@ -12,17 +12,17 @@ import { SelectChangeEvent } from "@mui/material/Select";
 import { StrictMode, useState, useCallback, useRef, useEffect, useMemo } from "react";
 import ReactDOM from "react-dom";
 import { makeStyles } from "tss-react/mui";
+import { useAppTimeFormat } from "@foxglove/studio-base/hooks";
 
 import { PanelExtensionContext } from "@foxglove/studio";
 import Panel from "@foxglove/studio-base/components/Panel";
 import { PanelExtensionAdapter } from "@foxglove/studio-base/components/PanelExtensionAdapter";
 import Stack from "@foxglove/studio-base/components/Stack";
-import ObjectDetails from "@foxglove/studio-base/panels/ThreeDimensionalViz/Interactions/ObjectDetails";
+import ObjectDetails from "@foxglove/studio-base/panels/ThreeDeeRender/Interactions/ObjectDetails";
 import { RosValue } from "@foxglove/studio-base/players/types";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
 
 import { SERVICE_MAPPING, LOCAL_STORAGE_KEY, DEFAULT_PARAMS, ServiceParam } from "./data";
-import helpContent from "./index.help.md";
 
 const useStyles = makeStyles()(() => ({
   taskTitle: {
@@ -62,6 +62,7 @@ type QuestState = {
 };
 
 function Service({ context }: { context: PanelExtensionContext }): JSX.Element {
+  const { timeZone } = useAppTimeFormat();
   const [expanded, setExpanded] = useState(false);
   const { classes } = useStyles();
   // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -274,7 +275,7 @@ function Service({ context }: { context: PanelExtensionContext }): JSX.Element {
         </Stack>
       ) : (
         <Stack paddingX={2} overflowY="auto" style={{ maxHeight: 800 }}>
-          <ObjectDetails selectedObject={questParams.response ?? {}} type="callService" />
+          <ObjectDetails selectedObject={questParams.response ?? {}} timezone={timeZone} />
         </Stack>
       )}
     </>
@@ -286,7 +287,6 @@ function ServiceAdapter(props: { config: unknown; saveConfig: SaveConfig<unknown
     <PanelExtensionAdapter
       config={props.config}
       saveConfig={props.saveConfig}
-      help={helpContent}
       initPanel={initPanel}
     />
   );
