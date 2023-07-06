@@ -43,6 +43,7 @@ const TreeContainer = styled.div`
 type Props = {
   readonly interactionData?: InteractionData;
   readonly selectedObject?: RosValue;
+  type?: string;
 };
 
 function maybePlainObject(rawVal: unknown) {
@@ -52,7 +53,7 @@ function maybePlainObject(rawVal: unknown) {
   return rawVal;
 }
 
-function ObjectDetails({ interactionData, selectedObject }: Props): JSX.Element {
+function ObjectDetails({ interactionData, selectedObject, type }: Props): JSX.Element {
   const jsonTreeTheme = useJsonTreeTheme();
   const topic = interactionData?.topic ?? "";
 
@@ -61,7 +62,8 @@ function ObjectDetails({ interactionData, selectedObject }: Props): JSX.Element 
   const plainObject = maybePlainObject(selectedObject);
   const originalObject = omit(plainObject as Record<string, unknown>, "interactionData");
 
-  const getItemString = useGetItemStringWithTimezone();
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const getItemString = type !== "callService" ? useGetItemStringWithTimezone() : undefined;
 
   if (topic.length === 0) {
     // show the original object directly if there is no interaction data

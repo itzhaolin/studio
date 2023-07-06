@@ -26,6 +26,7 @@ import PublishHelp from "./Publish/index.help.md";
 import publishThumbnail from "./Publish/thumbnail.png";
 import RawMessagesHelp from "./RawMessages/index.help.md";
 import rawMessagesThumbnail from "./RawMessages/thumbnail.png";
+import ServiceHelp from "./Service/index.help.md";
 import StateTransitionsHelp from "./StateTransitions/index.help.md";
 import stateTransitionsThumbnail from "./StateTransitions/thumbnail.png";
 import TabHelp from "./Tab/index.help.md";
@@ -226,6 +227,14 @@ const builtin: PanelInfo[] = [
     help: TabHelp,
     thumbnail: tabThumbnail,
     module: async () => await import("./Tab"),
+  },
+  {
+    title: "Service",
+    type: "Service",
+    description: "This is customer Service for Call.",
+    help: ServiceHelp,
+    thumbnail: dataSourceInfoThumbnail,
+    module: async () => await import("./Service"),
   },
 ];
 
