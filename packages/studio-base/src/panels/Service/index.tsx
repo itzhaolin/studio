@@ -92,7 +92,7 @@ function Service({ context }: { context: PanelExtensionContext }): JSX.Element {
 
   const addServiceList = useCallback(
     (serviceItem: ServiceParam) => {
-      // 存在快捷任务中  和  已经记录的数据 不添加
+      // if existed quickTask or recorded, not record
       const hasServiceName =
         quickTaskNameList.includes(serviceItem.name) ||
         currentServiceList.findIndex((v) => v.name === serviceItem.name) > -1;
@@ -123,7 +123,7 @@ function Service({ context }: { context: PanelExtensionContext }): JSX.Element {
         response,
         error: undefined,
       }));
-      // service 请求成功后记录
+      // service success record
       addServiceList({ name: stateRef.current.serviceName, param: stateRef.current.request });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (error: any) {
