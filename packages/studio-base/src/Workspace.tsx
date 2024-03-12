@@ -12,12 +12,13 @@
 
 import { useSnackbar } from "notistack";
 import { extname } from "path";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
 
 import Logger from "@foxglove/log";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
-import { AppBar } from "@foxglove/studio-base/components/AppBar";
+import { AppBarProps, AppBar } from "@foxglove/studio-base/components/AppBar";
 import { CustomWindowControlsProps } from "@foxglove/studio-base/components/AppBar/CustomWindowControls";
 import {
   DataSourceDialog,
@@ -31,14 +32,12 @@ import {
   useMessagePipeline,
   useMessagePipelineGetter,
 } from "@foxglove/studio-base/components/MessagePipeline";
-import MultiProvider from "@foxglove/studio-base/components/MultiProvider";
 import PanelLayout from "@foxglove/studio-base/components/PanelLayout";
 import PanelSettings from "@foxglove/studio-base/components/PanelSettings";
 import PlaybackControls from "@foxglove/studio-base/components/PlaybackControls";
 import { ProblemsList } from "@foxglove/studio-base/components/ProblemsList";
 import RemountOnValueChange from "@foxglove/studio-base/components/RemountOnValueChange";
 import { Sidebars, SidebarItem } from "@foxglove/studio-base/components/Sidebars";
-import { SignInFormModal } from "@foxglove/studio-base/components/SignInFormModal";
 import Stack from "@foxglove/studio-base/components/Stack";
 import { StudioLogsSettings } from "@foxglove/studio-base/components/StudioLogsSettings";
 import { SyncAdapters } from "@foxglove/studio-base/components/SyncAdapters";
@@ -46,10 +45,9 @@ import { TopicList } from "@foxglove/studio-base/components/TopicList";
 import VariablesList from "@foxglove/studio-base/components/VariablesList";
 import { WorkspaceDialogs } from "@foxglove/studio-base/components/WorkspaceDialogs";
 import { useAppContext } from "@foxglove/studio-base/context/AppContext";
-import { useCurrentUser } from "@foxglove/studio-base/context/CurrentUserContext";
+import { useCurrentUser } from "@foxglove/studio-base/context/BaseUserContext";
 import { EventsStore, useEvents } from "@foxglove/studio-base/context/EventsContext";
 import { useExtensionCatalog } from "@foxglove/studio-base/context/ExtensionCatalogContext";
-import { useNativeAppMenu } from "@foxglove/studio-base/context/NativeAppMenuContext";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import {
   LeftSidebarItemKey,
@@ -60,11 +58,10 @@ import {
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
 import { useDefaultWebLaunchPreference } from "@foxglove/studio-base/hooks/useDefaultWebLaunchPreference";
 import useElectronFilesToOpen from "@foxglove/studio-base/hooks/useElectronFilesToOpen";
-import { useInitialDeepLinkState } from "@foxglove/studio-base/hooks/useInitialDeepLinkState";
-import useNativeAppMenuEvent from "@foxglove/studio-base/hooks/useNativeAppMenuEvent";
 import { PlayerPresence } from "@foxglove/studio-base/players/types";
 import { PanelStateContextProvider } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import WorkspaceContextProvider from "@foxglove/studio-base/providers/WorkspaceContextProvider";
+import { parseAppURLState } from "@foxglove/studio-base/util/appURLState";
 
 import { useWorkspaceActions } from "./context/Workspace/useWorkspaceActions";
 
@@ -83,28 +80,14 @@ const useStyles = makeStyles()({
   },
 });
 
-function activeElementIsInput() {
-  return (
-    document.activeElement instanceof HTMLInputElement ||
-    document.activeElement instanceof HTMLTextAreaElement
-  );
-}
-
-function keyboardEventHasModifier(event: KeyboardEvent) {
-  if (navigator.userAgent.includes("Mac")) {
-    return event.metaKey;
-  } else {
-    return event.ctrlKey;
-  }
-}
-
 type WorkspaceProps = CustomWindowControlsProps & {
-  deepLinks?: string[]; // eslint-disable-line react/no-unused-prop-types
+  deepLinks?: readonly string[];
   appBarLeftInset?: number;
   onAppBarDoubleClick?: () => void;
+  // eslint-disable-next-line react/no-unused-prop-types
+  disablePersistenceForStorybook?: boolean;
+  AppBarComponent?: (props: AppBarProps) => JSX.Element;
 };
-
-const DEFAULT_DEEPLINKS = Object.freeze([]);
 
 const selectPlayerPresence = ({ playerState }: MessagePipelineContext) => playerState.presence;
 const selectPlayerIsPresent = ({ playerState }: MessagePipelineContext) =>
@@ -112,15 +95,18 @@ const selectPlayerIsPresent = ({ playerState }: MessagePipelineContext) =>
 const selectPlayerProblems = ({ playerState }: MessagePipelineContext) => playerState.problems;
 const selectIsPlaying = (ctx: MessagePipelineContext) =>
   ctx.playerState.activeData?.isPlaying === true;
+const selectRepeatEnabled = (ctx: MessagePipelineContext) =>
+  ctx.playerState.activeData?.repeatEnabled === true;
 const selectPause = (ctx: MessagePipelineContext) => ctx.pausePlayback;
 const selectPlay = (ctx: MessagePipelineContext) => ctx.startPlayback;
 const selectSeek = (ctx: MessagePipelineContext) => ctx.seekPlayback;
+const selectEnableRepeat = (ctx: MessagePipelineContext) => ctx.enableRepeatPlayback;
 const selectPlayUntil = (ctx: MessagePipelineContext) => ctx.playUntil;
 const selectPlayerId = (ctx: MessagePipelineContext) => ctx.playerState.playerId;
 const selectEventsSupported = (store: EventsStore) => store.eventsSupported;
+const selectSelectEvent = (store: EventsStore) => store.selectEvent;
 
 const selectWorkspaceDataSourceDialog = (store: WorkspaceContextStore) => store.dialogs.dataSource;
-const selectWorkspaceSidebarItem = (store: WorkspaceContextStore) => store.sidebars.legacy.item;
 const selectWorkspaceLeftSidebarItem = (store: WorkspaceContextStore) => store.sidebars.left.item;
 const selectWorkspaceLeftSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.left.open;
 const selectWorkspaceLeftSidebarSize = (store: WorkspaceContextStore) => store.sidebars.left.size;
@@ -128,16 +114,14 @@ const selectWorkspaceRightSidebarItem = (store: WorkspaceContextStore) => store.
 const selectWorkspaceRightSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.right.open;
 const selectWorkspaceRightSidebarSize = (store: WorkspaceContextStore) => store.sidebars.right.size;
 
-type WorkspaceContentProps = WorkspaceProps & { showSignInForm: boolean };
-
-function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
+function WorkspaceContent(props: WorkspaceProps): JSX.Element {
+  const { PerformanceSidebarComponent } = useAppContext();
   const { classes } = useStyles();
   const containerRef = useRef<HTMLDivElement>(ReactNull);
   const { availableSources, selectSource } = usePlayerSelection();
   const playerPresence = useMessagePipeline(selectPlayerPresence);
   const playerProblems = useMessagePipeline(selectPlayerProblems);
 
-  const sidebarItem = useWorkspaceStore(selectWorkspaceSidebarItem);
   const dataSourceDialog = useWorkspaceStore(selectWorkspaceDataSourceDialog);
   const leftSidebarItem = useWorkspaceStore(selectWorkspaceLeftSidebarItem);
   const leftSidebarOpen = useWorkspaceStore(selectWorkspaceLeftSidebarOpen);
@@ -145,6 +129,8 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
   const rightSidebarItem = useWorkspaceStore(selectWorkspaceRightSidebarItem);
   const rightSidebarOpen = useWorkspaceStore(selectWorkspaceRightSidebarOpen);
   const rightSidebarSize = useWorkspaceStore(selectWorkspaceRightSidebarSize);
+  const { t } = useTranslation("workspace");
+  const { AppBarComponent = AppBar } = props;
 
   const { dialogActions, sidebarActions } = useWorkspaceActions();
 
@@ -163,15 +149,13 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
   // see comment below above the RemountOnValueChange component
   const playerId = useMessagePipeline(selectPlayerId);
 
-  const { currentUser } = useCurrentUser();
+  const { currentUserType } = useCurrentUser();
 
   useDefaultWebLaunchPreference();
 
-  const [enableStudioLogsSidebar = false] = useAppConfigurationValue<boolean>(
-    AppSetting.SHOW_DEBUG_PANELS,
-  );
+  const [enableDebugMode = false] = useAppConfigurationValue<boolean>(AppSetting.SHOW_DEBUG_PANELS);
 
-  const { workspaceExtensions } = useAppContext();
+  const { workspaceExtensions = [] } = useAppContext();
 
   // When a player is activated, hide the open dialog.
   useLayoutEffect(() => {
@@ -189,66 +173,6 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
       containerRef.current.focus();
     }
   }, []);
-
-  useNativeAppMenuEvent(
-    "open",
-    useCallback(async () => dialogActions.dataSource.open("start"), [dialogActions.dataSource]),
-  );
-
-  useNativeAppMenuEvent(
-    "open-file",
-    useCallback(async () => await dialogActions.openFile.open(), [dialogActions.openFile]),
-  );
-
-  useNativeAppMenuEvent(
-    "open-connection",
-    useCallback(() => dialogActions.dataSource.open("connection"), [dialogActions.dataSource]),
-  );
-
-  useNativeAppMenuEvent(
-    "open-demo",
-    useCallback(() => dialogActions.dataSource.open("demo"), [dialogActions.dataSource]),
-  );
-
-  useNativeAppMenuEvent(
-    "open-help-about",
-    useCallback(() => dialogActions.preferences.open("about"), [dialogActions.preferences]),
-  );
-
-  useNativeAppMenuEvent(
-    "open-help-general",
-    useCallback(() => dialogActions.preferences.open("general"), [dialogActions.preferences]),
-  );
-
-  useNativeAppMenuEvent("open-help-docs", () => window.open("https://foxglove.dev/docs", "_blank"));
-
-  useNativeAppMenuEvent("open-help-slack", () =>
-    window.open("https://foxglove.dev/slack", "_blank"),
-  );
-
-  const nativeAppMenu = useNativeAppMenu();
-
-  const connectionSources = useMemo(() => {
-    return availableSources.filter((source) => source.type === "connection");
-  }, [availableSources]);
-
-  useEffect(() => {
-    if (!nativeAppMenu) {
-      return;
-    }
-
-    for (const item of connectionSources) {
-      nativeAppMenu.addFileEntry(item.displayName, () => {
-        dialogActions.dataSource.open("connection", item);
-      });
-    }
-
-    return () => {
-      for (const item of connectionSources) {
-        nativeAppMenu.removeFileEntry(item.displayName);
-      }
-    };
-  }, [connectionSources, dialogActions.dataSource, nativeAppMenu]);
 
   const { enqueueSnackbar } = useSnackbar();
 
@@ -355,16 +279,16 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
   );
 
   const eventsSupported = useEvents(selectEventsSupported);
-  const showEventsTab = currentUser != undefined && eventsSupported;
+  const showEventsTab = currentUserType !== "unauthenticated" && eventsSupported;
 
   const leftSidebarItems = useMemo(() => {
     const items = new Map<LeftSidebarItemKey, SidebarItem>([
-      ["panel-settings", { title: "Panel", component: PanelSettings }],
-      ["topics", { title: "Topics", component: TopicList }],
+      ["panel-settings", { title: t("panel"), component: PanelSettings }],
+      ["topics", { title: t("topics"), component: TopicList }],
       [
         "problems",
         {
-          title: "Problems",
+          title: t("problems"),
           component: ProblemsList,
           badge:
             playerProblems && playerProblems.length > 0
@@ -377,40 +301,58 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
       ],
     ]);
     return items;
-  }, [playerProblems]);
+  }, [playerProblems, t]);
 
   const rightSidebarItems = useMemo(() => {
     const items = new Map<RightSidebarItemKey, SidebarItem>([
-      ["variables", { title: "Variables", component: VariablesList }],
+      ["variables", { title: t("variables"), component: VariablesList }],
     ]);
-    if (enableStudioLogsSidebar) {
-      items.set("studio-logs-settings", { title: "Studio Logs", component: StudioLogsSettings });
+    if (enableDebugMode) {
+      if (PerformanceSidebarComponent) {
+        items.set("performance", {
+          title: t("performance"),
+          component: PerformanceSidebarComponent,
+        });
+      }
+      items.set("studio-logs-settings", { title: t("studioLogs"), component: StudioLogsSettings });
     }
     if (showEventsTab) {
-      items.set("events", { title: "Events", component: EventsList });
+      items.set("events", { title: t("events"), component: EventsList });
     }
     return items;
-  }, [enableStudioLogsSidebar, showEventsTab]);
+  }, [enableDebugMode, showEventsTab, t, PerformanceSidebarComponent]);
+
+  const keyboardEventHasModifier = (event: KeyboardEvent) =>
+    navigator.userAgent.includes("Mac") ? event.metaKey : event.ctrlKey;
 
   const keyDownHandlers = useMemo(() => {
     return {
-      b: (ev: KeyboardEvent) => {
-        if (!keyboardEventHasModifier(ev) || activeElementIsInput() || sidebarItem == undefined) {
+      "[": () => {
+        sidebarActions.left.setOpen((oldValue) => !oldValue);
+      },
+      "]": () => {
+        sidebarActions.right.setOpen((oldValue) => !oldValue);
+      },
+      o: (ev: KeyboardEvent) => {
+        if (!keyboardEventHasModifier(ev)) {
           return;
         }
-
         ev.preventDefault();
-        sidebarActions.legacy.selectItem(undefined);
+        if (ev.shiftKey) {
+          dialogActions.dataSource.open("connection");
+          return;
+        }
+        void dialogActions.openFile.open().catch(console.error);
       },
-      "[": () => sidebarActions.left.setOpen((oldValue) => !oldValue),
-      "]": () => sidebarActions.right.setOpen((oldValue) => !oldValue),
     };
-  }, [sidebarActions.left, sidebarActions.legacy, sidebarActions.right, sidebarItem]);
+  }, [dialogActions.dataSource, dialogActions.openFile, sidebarActions.left, sidebarActions.right]);
 
   const play = useMessagePipeline(selectPlay);
   const playUntil = useMessagePipeline(selectPlayUntil);
   const pause = useMessagePipeline(selectPause);
   const seek = useMessagePipeline(selectSeek);
+  const enableRepeat = useMessagePipeline(selectEnableRepeat);
+  const repeatEnabled = useMessagePipeline(selectRepeatEnabled);
   const isPlaying = useMessagePipeline(selectIsPlaying);
   const getMessagePipeline = useMessagePipelineGetter();
   const getTimeInfo = useCallback(
@@ -418,30 +360,89 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
     [getMessagePipeline],
   );
 
+  const targetUrlState = useMemo(() => {
+    const deepLinks = props.deepLinks ?? [];
+    return deepLinks[0] ? parseAppURLState(new URL(deepLinks[0])) : undefined;
+  }, [props.deepLinks]);
+
+  const [unappliedSourceArgs, setUnappliedSourceArgs] = useState(
+    targetUrlState ? { ds: targetUrlState.ds, dsParams: targetUrlState.dsParams } : undefined,
+  );
+
+  const selectEvent = useEvents(selectSelectEvent);
+  // Load data source from URL.
+  useEffect(() => {
+    if (!unappliedSourceArgs) {
+      return;
+    }
+
+    // Apply any available data source args
+    if (unappliedSourceArgs.ds) {
+      log.debug("Initialising source from url", unappliedSourceArgs);
+      selectSource(unappliedSourceArgs.ds, {
+        type: "connection",
+        params: unappliedSourceArgs.dsParams,
+      });
+      selectEvent(unappliedSourceArgs.dsParams?.eventId);
+      setUnappliedSourceArgs({ ds: undefined, dsParams: undefined });
+    }
+  }, [selectEvent, selectSource, unappliedSourceArgs, setUnappliedSourceArgs]);
+
+  const [unappliedTime, setUnappliedTime] = useState(
+    targetUrlState ? { time: targetUrlState.time } : undefined,
+  );
+  // Seek to time in URL.
+  useEffect(() => {
+    if (unappliedTime?.time == undefined || !seek) {
+      return;
+    }
+
+    // Wait until player is ready before we try to seek.
+    if (playerPresence !== PlayerPresence.PRESENT) {
+      return;
+    }
+
+    log.debug(`Seeking to url time:`, unappliedTime.time);
+    seek(unappliedTime.time);
+    setUnappliedTime({ time: undefined });
+  }, [playerPresence, seek, unappliedTime]);
+
+  const appBar = useMemo(
+    () => (
+      <AppBarComponent
+        leftInset={props.appBarLeftInset}
+        onDoubleClick={props.onAppBarDoubleClick}
+        showCustomWindowControls={props.showCustomWindowControls}
+        isMaximized={props.isMaximized}
+        initialZoomFactor={props.initialZoomFactor}
+        onMinimizeWindow={props.onMinimizeWindow}
+        onMaximizeWindow={props.onMaximizeWindow}
+        onUnmaximizeWindow={props.onUnmaximizeWindow}
+        onCloseWindow={props.onCloseWindow}
+      />
+    ),
+    [
+      AppBarComponent,
+      props.appBarLeftInset,
+      props.isMaximized,
+      props.initialZoomFactor,
+      props.onAppBarDoubleClick,
+      props.onCloseWindow,
+      props.onMaximizeWindow,
+      props.onMinimizeWindow,
+      props.onUnmaximizeWindow,
+      props.showCustomWindowControls,
+    ],
+  );
+
   return (
-    <MultiProvider
-      providers={[
-        /* eslint-disable react/jsx-key */
-        <PanelStateContextProvider />,
-        /* eslint-enable react/jsx-key */
-      ]}
-    >
-      {props.showSignInForm && <SignInFormModal />}
+    <PanelStateContextProvider>
       {dataSourceDialog.open && <DataSourceDialog />}
       <DocumentDropListener onDrop={dropHandler} allowedExtensions={allowedDropExtensions} />
       <SyncAdapters />
       <KeyListener global keyDownHandlers={keyDownHandlers} />
       <div className={classes.container} ref={containerRef} tabIndex={0}>
-        <AppBar
-          leftInset={props.appBarLeftInset}
-          onDoubleClick={props.onAppBarDoubleClick}
-          showCustomWindowControls={props.showCustomWindowControls}
-          isMaximized={props.isMaximized}
-          onMinimizeWindow={props.onMinimizeWindow}
-          onMaximizeWindow={props.onMaximizeWindow}
-          onUnmaximizeWindow={props.onUnmaximizeWindow}
-          onCloseWindow={props.onCloseWindow}
-        />
+        {appBar}
         <Sidebars
           leftItems={leftSidebarItems}
           selectedLeftKey={leftSidebarOpen ? leftSidebarItem : undefined}
@@ -461,7 +462,7 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
             </Stack>
           </RemountOnValueChange>
         </Sidebars>
-        {play && pause && seek && (
+        {play && pause && seek && enableRepeat && (
           <div style={{ flexShrink: 0 }}>
             <PlaybackControls
               play={play}
@@ -469,14 +470,17 @@ function WorkspaceContent(props: WorkspaceContentProps): JSX.Element {
               seek={seek}
               playUntil={playUntil}
               isPlaying={isPlaying}
+              repeatEnabled={repeatEnabled}
+              enableRepeatPlayback={enableRepeat}
               getTimeInfo={getTimeInfo}
             />
           </div>
         )}
       </div>
-      {!props.showSignInForm && workspaceExtensions}
+      {/* Splat to avoid requiring unique a `key` on each item in workspaceExtensions */}
+      {...workspaceExtensions}
       <WorkspaceDialogs />
-    </MultiProvider>
+    </PanelStateContextProvider>
   );
 }
 
@@ -485,16 +489,12 @@ export default function Workspace(props: WorkspaceProps): JSX.Element {
     AppSetting.SHOW_OPEN_DIALOG_ON_STARTUP,
   );
 
-  const { currentUser } = useCurrentUser();
-
-  const { currentUserRequired } = useInitialDeepLinkState(props.deepLinks ?? DEFAULT_DEEPLINKS);
+  const { workspaceStoreCreator } = useAppContext();
 
   const isPlayerPresent = useMessagePipeline(selectPlayerIsPresent);
 
-  const showSignInForm = currentUserRequired && currentUser == undefined;
-
   const initialItem: undefined | DataSourceDialogItem =
-    isPlayerPresent || !showOpenDialogOnStartup || showSignInForm ? undefined : "start";
+    isPlayerPresent || !showOpenDialogOnStartup ? undefined : "start";
 
   const initialState: Pick<WorkspaceContextStore, "dialogs"> = {
     dialogs: {
@@ -511,8 +511,12 @@ export default function Workspace(props: WorkspaceProps): JSX.Element {
   };
 
   return (
-    <WorkspaceContextProvider initialState={initialState}>
-      <WorkspaceContent showSignInForm={showSignInForm} {...props} />
+    <WorkspaceContextProvider
+      initialState={initialState}
+      workspaceStoreCreator={workspaceStoreCreator}
+      disablePersistenceForStorybook={props.disablePersistenceForStorybook}
+    >
+      <WorkspaceContent {...props} />
     </WorkspaceContextProvider>
   );
 }

@@ -11,15 +11,24 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
+import { mightActuallyBePartial } from "@foxglove/studio-base/util/mightActuallyBePartial";
+
 import { getNormalizedMessage, getNormalizedLevel } from "./conversion";
 import { LogMessageEvent } from "./types";
 
 export default function filterMessages(
   events: readonly LogMessageEvent[],
-  filter: { minLogLevel: number; searchTerms: string[] },
+  filter: {
+    minLogLevel: number;
+    searchTerms: string[];
+    nameFilter: Record<string, { visible?: boolean }>;
+  },
 ): readonly LogMessageEvent[] {
-  const { minLogLevel, searchTerms } = filter;
-  const hasActiveFilters = minLogLevel > 1 || searchTerms.length > 0;
+  const { minLogLevel, searchTerms, nameFilter } = filter;
+  const hasActiveFilters =
+    minLogLevel > 1 ||
+    searchTerms.length > 0 ||
+    Object.values(nameFilter).some(({ visible }) => visible === false);
   // return all messages if we wouldn't filter anything
   if (!hasActiveFilters) {
     return events;
@@ -34,11 +43,16 @@ export default function filterMessages(
       return false;
     }
 
+    const maybeName = mightActuallyBePartial(logMessage).name;
+    if (maybeName != undefined && nameFilter[maybeName]?.visible === false) {
+      return false;
+    }
+
     if (searchTerms.length === 0) {
       return true;
     }
 
-    const lowerCaseName = logMessage.name?.toLowerCase() ?? "";
+    const lowerCaseName = mightActuallyBePartial(logMessage).name?.toLowerCase() ?? "";
     const lowerCaseMsg = getNormalizedMessage(logMessage).toLowerCase();
     return searchTermsInLowerCase.some(
       (term) => lowerCaseName.includes(term) || lowerCaseMsg.includes(term),

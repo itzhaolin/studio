@@ -11,7 +11,7 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { isEqual, sortBy, transform, keyBy } from "lodash";
+import * as _ from "lodash-es";
 import { v4 as uuidv4 } from "uuid";
 
 import { debouncePromise } from "@foxglove/den/async";
@@ -19,7 +19,7 @@ import { filterMap } from "@foxglove/den/collection";
 import Log from "@foxglove/log";
 import roslib from "@foxglove/roslibjs";
 import { parse as parseMessageDefinition } from "@foxglove/rosmsg";
-import { LazyMessageReader } from "@foxglove/rosmsg-serialization";
+import { MessageReader as ROS1MessageReader } from "@foxglove/rosmsg-serialization";
 import { MessageReader as ROS2MessageReader } from "@foxglove/rosmsg2-serialization";
 import { Time, fromMillis, toSec } from "@foxglove/rostime";
 import { ParameterValue } from "@foxglove/studio";
@@ -37,6 +37,7 @@ import {
   PlayerMetricsCollectorInterface,
   TopicStats,
   TopicWithSchemaName,
+  PlaybackSpeed,
 } from "@foxglove/studio-base/players/types";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { bagConnectionsToDatatypes } from "@foxglove/studio-base/util/bagConnectionsHelper";
@@ -54,7 +55,7 @@ function collateNodeDetails(
   details: RosNodeDetails[],
   key: keyof RosNodeDetails,
 ): Map<string, Set<string>> {
-  return transform(
+  return _.transform(
     details,
     (acc, detail) => {
       const { node, values } = detail[key];
@@ -96,7 +97,7 @@ export default class RosbridgePlayer implements Player {
   #subscribedTopics = new Map<string, Set<string>>(); // A map of topic names to the set of subscriber IDs subscribed to each topic.
   #services = new Map<string, Set<string>>(); // A map of service names to service provider IDs that provide each service.
   #messageReadersByDatatype: {
-    [datatype: string]: LazyMessageReader | ROS2MessageReader;
+    [datatype: string]: ROS1MessageReader | ROS2MessageReader;
   } = {};
   #start?: Time; // The time at which we started playing.
   #clockTime?: Time; // The most recent published `/clock` time, if available
@@ -109,10 +110,9 @@ export default class RosbridgePlayer implements Player {
   #topicPublishers = new Map<string, roslib.Topic>();
   // which topics we want to advertise to other nodes
   #advertisements: AdvertiseOptions[] = [];
-  #parsedTopics: Set<string> = new Set();
+  #parsedTopics = new Set<string>();
   #receivedBytes: number = 0;
   #metricsCollector: PlayerMetricsCollectorInterface;
-  #hasReceivedMessage = false;
   #presence: PlayerPresence = PlayerPresence.NOT_PRESENT;
   #problems = new PlayerProblemManager();
   #emitTimer?: ReturnType<typeof setTimeout>;
@@ -205,7 +205,7 @@ export default class RosbridgePlayer implements Player {
     if (!this.#providerTopics || newTopics.length !== this.#providerTopics.length) {
       return true;
     }
-    return !isEqual(this.#providerTopics, newTopics);
+    return !_.isEqual(this.#providerTopics, newTopics);
   };
 
   async #requestTopics(opt?: { forceUpdate: boolean }): Promise<void> {
@@ -238,7 +238,9 @@ export default class RosbridgePlayer implements Player {
         topics: string[];
         types: string[];
         typedefs_full_text: string[];
-      }>((resolve, reject) => rosClient.getTopicsAndRawTypes(resolve, reject));
+      }>((resolve, reject) => {
+        rosClient.getTopicsAndRawTypes(resolve, reject);
+      });
 
       clearTimeout(topicsStallWarningTimeout);
       this.#problems.removeProblem("topicsAndRawTypesTimeout");
@@ -246,7 +248,7 @@ export default class RosbridgePlayer implements Player {
       const topicsMissingDatatypes: string[] = [];
       const topics: TopicWithSchemaName[] = [];
       const datatypeDescriptions = [];
-      const messageReaders: Record<string, LazyMessageReader | ROS2MessageReader> = {};
+      const messageReaders: Record<string, ROS1MessageReader | ROS2MessageReader> = {};
 
       // Automatically detect the ROS version based on the datatypes.
       // The rosbridge server itself publishes /rosout so the topic should be reliably present.
@@ -282,7 +284,7 @@ export default class RosbridgePlayer implements Player {
         if (!messageReaders[type]) {
           messageReaders[type] =
             this.#rosVersion !== 2
-              ? new LazyMessageReader(parsedDefinition)
+              ? new ROS1MessageReader(parsedDefinition)
               : new ROS2MessageReader(parsedDefinition);
         }
       }
@@ -290,7 +292,7 @@ export default class RosbridgePlayer implements Player {
       // We call requestTopics on a timeout to check for new topics. If there are no changes to topics
       // we want to bail and avoid updating readers, subscribers, etc.
       // However, during a re-connect, we _do_ want to refresh this list and re-subscribe
-      const sortedTopics = sortBy(topics, "name");
+      const sortedTopics = _.sortBy(topics, "name");
       if (!forceUpdate && !this.#topicsChanged(sortedTopics)) {
         return;
       }
@@ -324,7 +326,9 @@ export default class RosbridgePlayer implements Player {
       this.setSubscriptions(this.#requestedSubscriptions);
 
       // Refresh the full graph topology
-      this.#refreshSystemState().catch((error) => log.error(error));
+      this.#refreshSystemState().catch((error) => {
+        log.error(error);
+      });
     } catch (error) {
       log.error(error);
       clearTimeout(topicsStallWarningTimeout);
@@ -402,6 +406,7 @@ export default class RosbridgePlayer implements Player {
         endTime: currentTime,
         currentTime,
         isPlaying: true,
+        repeatEnabled: false,
         speed: 1,
         // We don't support seeking, so we need to set this to any fixed value. Just avoid 0 so
         // that we don't accidentally hit falsy checks.
@@ -431,8 +436,6 @@ export default class RosbridgePlayer implements Player {
       clearTimeout(this.#emitTimer);
       this.#emitTimer = undefined;
     }
-    this.#metricsCollector.close();
-    this.#hasReceivedMessage = false;
   }
 
   public setSubscriptions(subscriptions: SubscribePayload[]): void {
@@ -448,7 +451,7 @@ export default class RosbridgePlayer implements Player {
     this.#parsedTopics = new Set(subscriptions.map(({ topic }) => topic));
 
     // See what topics we actually can subscribe to.
-    const availableTopicsByTopicName = keyBy(this.#providerTopics ?? [], ({ name }) => name);
+    const availableTopicsByTopicName = _.keyBy(this.#providerTopics ?? [], ({ name }) => name);
     const topicNames = subscriptions
       .map(({ topic }) => topic)
       .filter((topicName) => availableTopicsByTopicName[topicName]);
@@ -482,23 +485,6 @@ export default class RosbridgePlayer implements Player {
         try {
           const buffer = (message as { bytes: ArrayBuffer }).bytes;
           const bytes = new Uint8Array(buffer);
-
-          // This conditional can be removed when the ROS2 deserializer supports size()
-          if (messageReader instanceof LazyMessageReader) {
-            const msgSize = messageReader.size(bytes);
-            if (msgSize > bytes.byteLength) {
-              this.#problems.addProblem(problemId, {
-                severity: "error",
-                message: `Message buffer not large enough on ${topicName}`,
-                error: new Error(
-                  `Cannot read ${msgSize} byte message from ${bytes.byteLength} byte buffer`,
-                ),
-              });
-              this.#emitState();
-              return;
-            }
-          }
-
           const innerMessage = messageReader.readMessage(bytes);
 
           // handle clock messages before choosing receiveTime so the clock can set its own receive time
@@ -514,11 +500,6 @@ export default class RosbridgePlayer implements Player {
             }
           }
           const receiveTime = this.#getCurrentTime();
-
-          if (!this.#hasReceivedMessage) {
-            this.#hasReceivedMessage = true;
-            this.#metricsCollector.recordTimeToFirstMsgs();
-          }
 
           if (this.#parsedTopics.has(topicName)) {
             const msg: MessageEvent = {
@@ -638,8 +619,12 @@ export default class RosbridgePlayer implements Player {
     return await new Promise<Record<string, unknown>>((resolve, reject) => {
       proxy.callService(
         request,
-        (response: Record<string, unknown>) => resolve(response),
-        (error: Error) => reject(error),
+        (response: Record<string, unknown>) => {
+          resolve(response);
+        },
+        (error: Error) => {
+          reject(error);
+        },
       );
     });
   }
@@ -654,7 +639,7 @@ export default class RosbridgePlayer implements Player {
   public seekPlayback(_time: Time): void {
     // no-op
   }
-  public setPlaybackSpeed(_speedFraction: number): void {
+  public setPlaybackSpeed(_speedFraction: PlaybackSpeed): void {
     // no-op
   }
   public setGlobalVariables(): void {
@@ -707,7 +692,9 @@ export default class RosbridgePlayer implements Player {
       this.#isRefreshing = true;
 
       const nodes = await new Promise<string[]>((resolve, reject) => {
-        this.#rosClient?.getNodes((fetchedNodes) => resolve(fetchedNodes), reject);
+        this.#rosClient?.getNodes((fetchedNodes) => {
+          resolve(fetchedNodes);
+        }, reject);
       });
 
       const promises = nodes.map(async (node) => {

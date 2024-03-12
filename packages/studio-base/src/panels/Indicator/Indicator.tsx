@@ -2,17 +2,15 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { Typography, useTheme } from "@mui/material";
-import { last } from "lodash";
+import { Typography } from "@mui/material";
+import * as _ from "lodash-es";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useState } from "react";
-import { withStyles } from "tss-react/mui";
+import { makeStyles } from "tss-react/mui";
 
+import { MessagePath, parseMessagePath } from "@foxglove/message-path";
 import { MessageEvent, PanelExtensionContext, SettingsTreeAction } from "@foxglove/studio";
-import { RosPath } from "@foxglove/studio-base/components/MessagePathSyntax/constants";
-import parseRosPath from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
 import { simpleGetMessagePathDataItems } from "@foxglove/studio-base/components/MessagePathSyntax/simpleGetMessagePathDataItems";
 import Stack from "@foxglove/studio-base/components/Stack";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
 import { getMatchingRule } from "./getMatchingRule";
 import { settingsActionReducer, useSettingsTree } from "./settings";
@@ -30,7 +28,7 @@ const defaultConfig: Config = {
   rules: [{ operator: "=", rawValue: "true", color: "#68e24a", label: "True" }],
 };
 
-const IndicatorBulb = withStyles("div", {
+const useStyles = makeStyles()({
   root: {
     width: 40,
     height: 40,
@@ -46,9 +44,9 @@ const IndicatorBulb = withStyles("div", {
 
 type State = {
   path: string;
-  parsedPath: RosPath | undefined;
+  parsedPath: MessagePath | undefined;
   latestMessage: MessageEvent | undefined;
-  latestMatchingQueriedData: unknown | undefined;
+  latestMatchingQueriedData: unknown;
   error: Error | undefined;
   pathParseError: string | undefined;
 };
@@ -70,7 +68,7 @@ function reducer(state: State, action: Action): State {
     switch (action.type) {
       case "frame": {
         if (state.pathParseError != undefined) {
-          return { ...state, latestMessage: last(action.messages), error: undefined };
+          return { ...state, latestMessage: _.last(action.messages), error: undefined };
         }
         let latestMatchingQueriedData = state.latestMatchingQueriedData;
         let latestMessage = state.latestMessage;
@@ -91,7 +89,7 @@ function reducer(state: State, action: Action): State {
         return { ...state, latestMessage, latestMatchingQueriedData, error: undefined };
       }
       case "path": {
-        const newPath = parseRosPath(action.path);
+        const newPath = parseMessagePath(action.path);
         let pathParseError: string | undefined;
         if (
           newPath?.messagePath.some(
@@ -103,7 +101,7 @@ function reducer(state: State, action: Action): State {
         ) {
           pathParseError = "Message paths using variables are not currently supported";
         }
-        let latestMatchingQueriedData: unknown | undefined;
+        let latestMatchingQueriedData: unknown;
         let error: Error | undefined;
         try {
           latestMatchingQueriedData =
@@ -140,8 +138,11 @@ export function Indicator({ context }: Props): JSX.Element {
   // onRender will setRenderDone to a done callback which we can invoke after we've rendered
   const [renderDone, setRenderDone] = useState<() => void>(() => () => {});
   const {
-    palette: { augmentColor },
-  } = useTheme();
+    classes,
+    theme: {
+      palette: { augmentColor },
+    },
+  } = useStyles();
 
   const [config, setConfig] = useState(() => ({
     ...defaultConfig,
@@ -153,7 +154,7 @@ export function Indicator({ context }: Props): JSX.Element {
     config,
     ({ path }): State => ({
       path,
-      parsedPath: parseRosPath(path),
+      parsedPath: parseMessagePath(path),
       latestMessage: undefined,
       latestMatchingQueriedData: undefined,
       pathParseError: undefined,
@@ -191,8 +192,9 @@ export function Indicator({ context }: Props): JSX.Element {
   }, [context]);
 
   const settingsActionHandler = useCallback(
-    (action: SettingsTreeAction) =>
-      setConfig((prevConfig) => settingsActionReducer(prevConfig, action)),
+    (action: SettingsTreeAction) => {
+      setConfig((prevConfig) => settingsActionReducer(prevConfig, action));
+    },
     [setConfig],
   );
 
@@ -206,9 +208,11 @@ export function Indicator({ context }: Props): JSX.Element {
 
   useEffect(() => {
     if (state.parsedPath?.topicName != undefined) {
-      context.subscribe([state.parsedPath.topicName]);
+      context.subscribe([{ topic: state.parsedPath.topicName, preload: false }]);
     }
-    return () => context.unsubscribeAll();
+    return () => {
+      context.unsubscribeAll();
+    };
   }, [context, state.parsedPath?.topicName]);
 
   // Indicate render is complete - the effect runs after the dom is updated
@@ -241,7 +245,10 @@ export function Indicator({ context }: Props): JSX.Element {
       >
         <Stack direction="row" alignItems="center" gap={2}>
           {style === "bulb" && (
-            <IndicatorBulb style={{ backgroundColor: matchingRule?.color ?? fallbackColor }} />
+            <div
+              className={classes.root}
+              style={{ backgroundColor: matchingRule?.color ?? fallbackColor }}
+            />
           )}
           <Typography
             color={
@@ -251,7 +258,7 @@ export function Indicator({ context }: Props): JSX.Element {
                   }).contrastText
                 : matchingRule?.color ?? fallbackColor
             }
-            fontFamily={fonts.MONOSPACE}
+            fontFamily="fontMonospace"
             variant="h1"
             whiteSpace="pre"
           >

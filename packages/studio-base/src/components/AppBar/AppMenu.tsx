@@ -6,22 +6,19 @@ import { Menu, PaperProps, PopoverPosition, PopoverReference } from "@mui/materi
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
-import { shallow } from "zustand/shallow";
 
 import TextMiddleTruncate from "@foxglove/studio-base/components/TextMiddleTruncate";
-import { useAnalytics } from "@foxglove/studio-base/context/AnalyticsContext";
-import { useCurrentUserType } from "@foxglove/studio-base/context/CurrentUserContext";
 import { usePlayerSelection } from "@foxglove/studio-base/context/PlayerSelectionContext";
 import {
   WorkspaceContextStore,
   useWorkspaceStore,
 } from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
 import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
-import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
 
-import { MenuItem, NestedMenuItem } from "./NestedMenuItem";
+import { NestedMenuItem } from "./NestedMenuItem";
+import { AppBarMenuItem } from "./types";
 
-type AppMenuProps = {
+export type AppMenuProps = {
   handleClose: () => void;
   anchorEl?: HTMLElement;
   anchorReference?: PopoverReference;
@@ -40,7 +37,8 @@ const useStyles = makeStyles()({
   },
 });
 
-const selectWorkspace = (store: WorkspaceContextStore) => store;
+const selectLeftSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.left.open;
+const selectRightSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.right.open;
 
 export function AppMenu(props: AppMenuProps): JSX.Element {
   const { open, handleClose, anchorEl, anchorReference, anchorPosition, disablePortal } = props;
@@ -49,17 +47,11 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
 
   const [nestedMenu, setNestedMenu] = useState<string | undefined>();
 
-  const currentUserType = useCurrentUserType();
-  const analytics = useAnalytics();
-
   const { recentSources, selectRecent } = usePlayerSelection();
-  const {
-    sidebars: {
-      left: { open: leftSidebarOpen },
-      right: { open: rightSidebarOpen },
-    },
-  } = useWorkspaceStore(selectWorkspace, shallow);
-  const { sidebarActions, dialogActions } = useWorkspaceActions();
+
+  const leftSidebarOpen = useWorkspaceStore(selectLeftSidebarOpen);
+  const rightSidebarOpen = useWorkspaceStore(selectRightSidebarOpen);
+  const { sidebarActions, dialogActions, layoutActions } = useWorkspaceActions();
 
   const handleNestedMenuClose = useCallback(() => {
     setNestedMenu(undefined);
@@ -70,27 +62,16 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
     setNestedMenu(id);
   }, []);
 
-  const handleAnalytics = useCallback(
-    (cta: string) => {
-      void analytics.logEvent(AppEvent.APP_MENU_CLICK, {
-        user: currentUserType,
-        cta,
-      });
-    },
-    [analytics, currentUserType],
-  );
-
   // FILE
 
   const fileItems = useMemo(() => {
-    const items: MenuItem[] = [
+    const items: AppBarMenuItem[] = [
       {
         type: "item",
         label: t("open"),
         key: "open",
         onClick: () => {
           dialogActions.dataSource.open("start");
-          handleAnalytics("open-data-source-dialog");
           handleNestedMenuClose();
         },
       },
@@ -99,7 +80,6 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
         label: t("openLocalFile"),
         key: "open-file",
         onClick: () => {
-          handleAnalytics("open-file");
           handleNestedMenuClose();
           dialogActions.openFile.open().catch(console.error);
         },
@@ -110,7 +90,6 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
         key: "open-connection",
         onClick: () => {
           dialogActions.dataSource.open("connection");
-          handleAnalytics("open-connection");
           handleNestedMenuClose();
         },
       },
@@ -123,7 +102,6 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
         type: "item",
         key: recent.id,
         onClick: () => {
-          handleAnalytics("open-recent");
           selectRecent(recent.id);
           handleNestedMenuClose();
         },
@@ -134,8 +112,8 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
     return items;
   }, [
     classes.truncate,
-    dialogActions,
-    handleAnalytics,
+    dialogActions.dataSource,
+    dialogActions.openFile,
     handleNestedMenuClose,
     recentSources,
     selectRecent,
@@ -144,7 +122,7 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
 
   // VIEW
 
-  const viewItems = useMemo<MenuItem[]>(
+  const viewItems = useMemo<AppBarMenuItem[]>(
     () => [
       {
         type: "item",
@@ -166,9 +144,31 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
           handleNestedMenuClose();
         },
       },
+      {
+        type: "divider",
+      },
+      {
+        type: "item",
+        label: t("importLayoutFromFile"),
+        key: "import-layout",
+        onClick: () => {
+          layoutActions.importFromFile();
+          handleNestedMenuClose();
+        },
+      },
+      {
+        type: "item",
+        label: t("exportLayoutToFile"),
+        key: "export-layout",
+        onClick: () => {
+          layoutActions.exportToFile();
+          handleNestedMenuClose();
+        },
+      },
     ],
     [
       handleNestedMenuClose,
+      layoutActions,
       leftSidebarOpen,
       rightSidebarOpen,
       sidebarActions.left,
@@ -181,29 +181,25 @@ export function AppMenu(props: AppMenuProps): JSX.Element {
 
   const onAboutClick = useCallback(() => {
     dialogActions.preferences.open("about");
-    handleAnalytics("about");
     handleNestedMenuClose();
-  }, [dialogActions.preferences, handleAnalytics, handleNestedMenuClose]);
+  }, [dialogActions.preferences, handleNestedMenuClose]);
 
   const onDocsClick = useCallback(() => {
-    handleAnalytics("docs");
-    window.open("https://foxglove.dev/docs", "_blank");
+    window.open("https://docs.foxglove.dev/docs", "_blank");
     handleNestedMenuClose();
-  }, [handleAnalytics, handleNestedMenuClose]);
+  }, [handleNestedMenuClose]);
 
   const onSlackClick = useCallback(() => {
-    handleAnalytics("join-slack");
     window.open("https://foxglove.dev/slack", "_blank");
     handleNestedMenuClose();
-  }, [handleAnalytics, handleNestedMenuClose]);
+  }, [handleNestedMenuClose]);
 
   const onDemoClick = useCallback(() => {
     dialogActions.dataSource.open("demo");
-    handleAnalytics("demo");
     handleNestedMenuClose();
-  }, [dialogActions.dataSource, handleAnalytics, handleNestedMenuClose]);
+  }, [dialogActions.dataSource, handleNestedMenuClose]);
 
-  const helpItems = useMemo<MenuItem[]>(
+  const helpItems = useMemo<AppBarMenuItem[]>(
     () => [
       { type: "item", key: "about", label: t("about"), onClick: onAboutClick },
       { type: "divider" },

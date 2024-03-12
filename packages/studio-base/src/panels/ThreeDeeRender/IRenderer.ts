@@ -13,9 +13,18 @@ import {
   Topic,
   VariableValue,
 } from "@foxglove/studio";
+import { PanelContextMenuItem } from "@foxglove/studio-base/components/PanelContextMenu";
+import {
+  BuiltinPanelExtensionContext,
+  DraggedMessagePath,
+  MessagePathDropStatus,
+} from "@foxglove/studio-base/components/PanelExtensionAdapter";
+import { HUDItemManager } from "@foxglove/studio-base/panels/ThreeDeeRender/HUDItemManager";
 import { ICameraHandler } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/ICameraHandler";
+import IAnalytics from "@foxglove/studio-base/services/IAnalytics";
 import { LabelPool } from "@foxglove/three-text";
 
+import { HUDItem } from "./HUDItemManager";
 import { Input } from "./Input";
 import { MeshUpAxis, ModelCache } from "./ModelCache";
 import { PickedRenderable } from "./Picker";
@@ -25,9 +34,9 @@ import { SharedGeometry } from "./SharedGeometry";
 import { CameraState } from "./camera";
 import { DetailLevel } from "./lod";
 import { LayerSettingsTransform } from "./renderables/FrameAxes";
-import { DownloadImageInfo } from "./renderables/Images/ImageTypes";
 import { MeasurementTool } from "./renderables/MeasurementTool";
 import { PublishClickTool, PublishClickType } from "./renderables/PublishClickTool";
+import { ColorModeSettings } from "./renderables/colorMode";
 import { MarkerPool } from "./renderables/markers/MarkerPool";
 import { Quaternion, Vector3 } from "./ros";
 import { BaseSettings, CustomLayerSettings, SelectEntry } from "./settings";
@@ -52,11 +61,12 @@ export type RendererEvents = {
   transformTreeUpdated: (renderer: IRenderer) => void;
   settingsTreeChange: (renderer: IRenderer) => void;
   configChange: (renderer: IRenderer) => void;
-  schemaHandlersChanged: (renderer: IRenderer) => void;
-  topicHandlersChanged: (renderer: IRenderer) => void;
+  schemaSubscriptionsChanged: (renderer: IRenderer) => void;
+  topicSubscriptionsChanged: (renderer: IRenderer) => void;
   topicsChanged: (renderer: IRenderer) => void;
   resetViewChanged: (renderer: IRenderer) => void;
   resetAllFramesCursor: (renderer: IRenderer) => void;
+  hudItemsChanged: (renderer: IRenderer) => void;
 };
 
 export type FollowMode = "follow-pose" | "follow-position" | "follow-none";
@@ -65,8 +75,15 @@ export type ImageAnnotationSettings = {
   visible: boolean;
 };
 
+/** Arguments that can be passed to the renderer for local testing */
+export type TestOptions = {
+  /** Override default downloading behavior, used for Storybook */
+  onDownloadImage?: (blob: Blob, fileName: string) => void;
+  debugPicking?: boolean;
+};
+
 /** Settings pertaining to Image mode */
-export type ImageModeConfig = {
+export type ImageModeConfig = Partial<ColorModeSettings> & {
   /** Image topic to display */
   imageTopic?: string;
   /** Topic containing CameraCalibration or CameraInfo */
@@ -162,6 +179,10 @@ export type RendererSubscription<T = unknown> = {
   shouldSubscribe?: (topic: string) => boolean;
   /** Callback that will be fired for each matching incoming message */
   handler: (messageEvent: MessageEvent<T>) => void;
+  /** Queue of messages to be handled since last frame. Will be reassigned to new empty array each frame. */
+  queue?: MessageEvent<T>[] | undefined;
+  /** Optional callback to be called on `queue` to filter. Returns new queue. */
+  filterQueue?: (queue: MessageEvent<T>[]) => MessageEvent<T>[];
 };
 
 export type AnyRendererSubscription = Immutable<
@@ -192,9 +213,11 @@ export class InstancedLineMaterial extends THREE.LineBasicMaterial {
 export interface IRenderer extends EventEmitter<RendererEvents> {
   readonly interfaceMode: InterfaceMode;
   readonly gl: THREE.WebGLRenderer;
+  readonly testOptions: TestOptions;
   maxLod: DetailLevel;
   config: Immutable<RendererConfig>;
   settings: SettingsManager;
+  hud: HUDItemManager;
   debugPicking: boolean;
   // [{ name, datatype }]
   topics: ReadonlyArray<Topic> | undefined;
@@ -207,9 +230,9 @@ export interface IRenderer extends EventEmitter<RendererEvents> {
   // extensionId -> SceneExtension
   sceneExtensions: Map<string, SceneExtension>;
   // datatype -> RendererSubscription[]
-  schemaHandlers: Map<string, RendererSubscription[]>;
+  schemaSubscriptions: Map<string, RendererSubscription[]>;
   // topicName -> RendererSubscription[]
-  topicHandlers: Map<string, RendererSubscription[]>;
+  topicSubscriptions: Map<string, RendererSubscription[]>;
   // layerId -> { action, handler }
   input: Input;
   readonly outlineMaterial: THREE.LineBasicMaterial;
@@ -240,6 +263,12 @@ export interface IRenderer extends EventEmitter<RendererEvents> {
   labelPool: LabelPool;
   markerPool: MarkerPool;
   sharedGeometry: SharedGeometry;
+
+  /** Optional analytics API to log events in Renderer or SceneExtensions */
+  analytics?: IAnalytics;
+  setAnalytics(analytics: IAnalytics): void;
+  enableImageOnlySubscriptionMode: () => void;
+  disableImageOnlySubscriptionMode: () => void;
 
   dispose(): void;
   cameraSyncError(): undefined | string;
@@ -311,9 +340,6 @@ export interface IRenderer extends EventEmitter<RendererEvents> {
   /** Reset any manual view modifications (image mode only). */
   resetView(): void;
 
-  /** Return the currently displayed image (image mode only). */
-  getCurrentImage(): DownloadImageInfo | undefined;
-
   setSelectedRenderable(selection: PickedRenderable | undefined): void;
 
   addMessageEvent(messageEvent: Readonly<MessageEvent>): void;
@@ -346,4 +372,21 @@ export interface IRenderer extends EventEmitter<RendererEvents> {
   // Callback handlers
   animationFrame: () => void;
   queueAnimationFrame: () => void;
+
+  // Function to fetch an asset from Studio's asset manager.
+  fetchAsset: BuiltinPanelExtensionContext["unstable_fetchAsset"];
+
+  /** Returns whether active scene extensions can handle the MessagePaths being dropped */
+  getDropStatus: (paths: readonly DraggedMessagePath[]) => MessagePathDropStatus;
+
+  /** Handles MessagePaths being dropped into the 3D panel. Allows scene extensions to update in response */
+  handleDrop: (paths: readonly DraggedMessagePath[]) => void;
+
+  /** Returns context menu items for active scene extensions. Takes Enqueue snackbar function for showing info that might result from option. */
+  getContextMenuItems: () => PanelContextMenuItem[];
+
+  /** Items to render in an over-canvas Heads-up display*/
+  hudItems: HUDItem[];
+
+  displayTemporaryError?: (message: string) => void;
 }

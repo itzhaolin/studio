@@ -2,7 +2,8 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { difference } from "lodash";
+import * as _ from "lodash-es";
+import { Opaque } from "ts-essentials";
 
 import {
   Immutable,
@@ -11,12 +12,14 @@ import {
   Subscription,
 } from "@foxglove/studio";
 import { Topic as PlayerTopic } from "@foxglove/studio-base/players/types";
+import { ExtensionNamespace } from "@foxglove/studio-base/types/Extensions";
 
 // Branded string to ensure that users go through the `converterKey` function to compute a lookup key
-type Brand<K, T> = K & { __brand: T };
-type ConverterKey = Brand<string, "ConverterKey">;
+type ConverterKey = Opaque<string, "ConverterKey">;
 
-type MessageConverter = RegisterMessageConverterArgs<unknown>;
+type MessageConverter = RegisterMessageConverterArgs<unknown> & {
+  extensionNamespace?: ExtensionNamespace;
+};
 
 type TopicSchemaConverterMap = Map<ConverterKey, MessageConverter[]>;
 
@@ -33,14 +36,18 @@ function converterKey(topic: string, schema: string): ConverterKey {
  * convertedMessages in place for efficiency.
  */
 export function convertMessage(
-  messageEvent: Immutable<MessageEvent<unknown>>,
+  messageEvent: Immutable<MessageEvent>,
   converters: Immutable<TopicSchemaConverterMap>,
-  convertedMessages: MessageEvent<unknown>[],
+  convertedMessages: MessageEvent[],
 ): void {
   const key = converterKey(messageEvent.topic, messageEvent.schemaName);
   const matchedConverters = converters.get(key);
   for (const converter of matchedConverters ?? []) {
     const convertedMessage = converter.converter(messageEvent.message, messageEvent);
+    // If the converter returns _undefined_ or _null_ the message is skipped
+    if (convertedMessage == undefined) {
+      continue;
+    }
     convertedMessages.push({
       topic: messageEvent.topic,
       schemaName: converter.toSchemaName,
@@ -58,7 +65,7 @@ export function convertMessage(
 export function mapDifference<K, V>(a: Map<K, V[]>, b: undefined | Map<K, V[]>): Map<K, V[]> {
   const result = new Map<K, V[]>();
   for (const [key, value] of a.entries()) {
-    const newValues = difference(value, b?.get(key) ?? []);
+    const newValues = _.difference(value, b?.get(key) ?? []);
     if (newValues.length > 0) {
       result.set(key, newValues);
     }
@@ -94,7 +101,7 @@ export function collateTopicSchemaConversions(
   messageConverters: undefined | readonly MessageConverter[],
 ): TopicSchemaConversions {
   const topicSchemaConverters: TopicSchemaConverterMap = new Map();
-  const unconvertedSubscriptionTopics: Set<string> = new Set();
+  const unconvertedSubscriptionTopics = new Set<string>();
 
   // Bin the subscriptions into two sets: those which want a conversion and those that do not.
   //
@@ -135,13 +142,13 @@ export function collateTopicSchemaConversions(
     }
 
     // Find a converter that can go from the original topic schema to the target schema
-    // Note: We only support one converter per unique from/to pair so this _find_ only needs to
-    //       find one converter rather than multiple converters.
-    const converter = messageConverters?.find(
+    const converters = (messageConverters ?? []).filter(
       (conv) =>
         conv.fromSchemaName === subscriberTopic.schemaName &&
         conv.toSchemaName === subscription.convertTo,
     );
+    // Prefer 'local' converters over 'org' provided ones
+    const converter = _.minBy(converters, (conv) => conv.extensionNamespace ?? "unknown");
 
     if (converter) {
       existingConverters ??= [];

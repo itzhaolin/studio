@@ -2,14 +2,15 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { Log as FoxgloveLog } from "@foxglove/schemas";
 import { Time, MessageEvent } from "@foxglove/studio";
-import { FoxgloveMessages } from "@foxglove/studio-base/types/FoxgloveMessages";
 import { Header } from "@foxglove/studio-base/types/Messages";
 
 export type Config = {
   searchTerms: string[];
   minLogLevel: number;
   topicToRender?: string;
+  nameFilter?: Record<string, { visible?: boolean }>;
 };
 
 export enum LogLevel {
@@ -52,6 +53,6 @@ export type NormalizedLogMessage = {
 };
 
 export type LogMessageEvent =
-  | MessageEvent<FoxgloveMessages["foxglove.Log"]>
+  | MessageEvent<FoxgloveLog>
   | MessageEvent<Ros1RosgraphMsgs$Log>
   | MessageEvent<Ros2RosgraphMsgs$Log>;

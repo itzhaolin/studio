@@ -13,6 +13,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader";
 
 import Logger from "@foxglove/log";
+import { BuiltinPanelExtensionContext } from "@foxglove/studio-base/components/PanelExtensionAdapter";
 
 const log = Logger.getLogger(__filename);
 
@@ -23,17 +24,20 @@ export type ModelCacheOptions = {
   edgeMaterial: THREE.Material;
   ignoreColladaUpAxis: boolean;
   meshUpAxis: MeshUpAxis;
+  fetchAsset: BuiltinPanelExtensionContext["unstable_fetchAsset"];
 };
 
 type LoadModelOptions = {
   overrideMediaType?: string;
+  /** A URL to e.g. a URDf which may be used to resolve mesh package:// URLs */
+  referenceUrl?: string;
 };
 
 export type LoadedModel = THREE.Group | THREE.Scene;
 
 type ErrorCallback = (err: Error) => void;
 
-const DEFAULT_COLOR = new THREE.Color(0x248eff).convertSRGBToLinear();
+const DEFAULT_COLOR = new THREE.Color(0x248eff);
 
 const GLTF_MIME_TYPES = ["model/gltf", "model/gltf-binary", "model/gltf+json"];
 // Sourced from <https://github.com/Ultimaker/Cura/issues/4141>
@@ -45,11 +49,13 @@ export class ModelCache {
   #textDecoder = new TextDecoder();
   #models = new Map<string, Promise<LoadedModel | undefined>>();
   #edgeMaterial: THREE.Material;
-
+  #fetchAsset: BuiltinPanelExtensionContext["unstable_fetchAsset"];
+  #colladaTextureObjectUrls = new Map<string, string>();
   #dracoLoader?: DRACOLoader;
 
   public constructor(public readonly options: ModelCacheOptions) {
     this.#edgeMaterial = options.edgeMaterial;
+    this.#fetchAsset = options.fetchAsset;
   }
 
   public async load(
@@ -80,18 +86,14 @@ export class ModelCache {
   ): Promise<LoadedModel> {
     const GLB_MAGIC = 0x676c5446; // "glTF"
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      const errMsg = response.statusText;
-      throw new Error(`Error ${response.status}${errMsg ? ` (${errMsg})` : ``}`);
-    }
+    const asset = await this.#fetchAsset(url, { referenceUrl: options.referenceUrl });
 
-    const buffer = await response.arrayBuffer();
+    const buffer = asset.data;
     if (buffer.byteLength < 4) {
       throw new Error(`${buffer.byteLength} bytes received`);
     }
-    const view = new DataView(buffer);
-    const contentType = options.overrideMediaType ?? response.headers.get("content-type") ?? "";
+    const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+    const contentType = options.overrideMediaType ?? asset.mediaType ?? "";
 
     // Check if this is a glTF .glb or .gltf file
     if (
@@ -105,7 +107,13 @@ export class ModelCache {
 
     // Check if this is a STL file based on content-type or file extension
     if (STL_MIME_TYPES.includes(contentType) || /\.stl$/i.test(url)) {
-      return this.#loadSTL(url, buffer, this.options.meshUpAxis);
+      // Create a copy of the array buffer to respect the `byteOffset` and `byteLength` value as
+      // the underlying three.js STLLoader only accepts an ArrayBuffer instance.
+      return this.#loadSTL(
+        url,
+        buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+        this.options.meshUpAxis,
+      );
     }
 
     // Check if this is a COLLADA file based on content-type or file extension
@@ -192,11 +200,37 @@ export class ModelCache {
     const upAxis = ignoreUpAxis
       ? "Z_UP"
       : (xml.querySelector("up_axis")?.textContent ?? "Y_UP").trim().toUpperCase();
-    xml.querySelectorAll("up_axis").forEach((node) => node.remove());
+    xml.querySelectorAll("up_axis").forEach((node) => {
+      node.remove();
+    });
     const xmlText = xml.documentElement.outerHTML;
 
+    // Preload textures. We do this here since we can't pass in an async function in LoadingManager.setURLModifier
+    // which is supposed to be used for overriding loading behavior. See also
+    // https://threejs.org/docs/index.html#api/en/loaders/managers/LoadingManager.setURLModifier
+    for await (const node of xml.querySelectorAll("init_from")) {
+      if (!node.textContent) {
+        continue;
+      }
+
+      try {
+        const textureUrl = new URL(node.textContent, baseUrl(url)).toString();
+        if (this.#colladaTextureObjectUrls.has(textureUrl)) {
+          continue;
+        }
+        const textureAsset = await this.#fetchAsset(textureUrl);
+        const objectUrl = URL.createObjectURL(
+          new Blob([textureAsset.data], { type: textureAsset.mediaType }),
+        );
+        this.#colladaTextureObjectUrls.set(textureUrl, objectUrl);
+      } catch (e) {
+        log.error(e);
+        onError(node.textContent);
+      }
+    }
+
     const manager = new THREE.LoadingManager(undefined, undefined, onError);
-    manager.setURLModifier(rewriteUrl);
+    manager.setURLModifier((u) => this.#colladaTextureObjectUrls.get(u) ?? rewriteUrl(u));
     const daeLoader = new ColladaLoader(manager);
 
     manager.itemStart(url);
@@ -268,6 +302,9 @@ export class ModelCache {
   }
 
   public dispose(): void {
+    this.#colladaTextureObjectUrls.forEach((_key, objectUrl) => {
+      URL.revokeObjectURL(objectUrl);
+    });
     // DRACOLoader is only loader that needs to be disposed because it uses a webworker
     this.#dracoLoader?.dispose();
     this.#dracoLoader = undefined;

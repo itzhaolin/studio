@@ -43,6 +43,7 @@ const playerStateWithMessages = (messages: any): PlayerState => ({
     startTime: { sec: 0, nsec: 0 },
     endTime: { sec: 2, nsec: 0 },
     isPlaying: false,
+    repeatEnabled: false,
     messages,
     totalBytesReceived: 1234,
   },
@@ -80,15 +81,6 @@ describe("MessagePipeline/MessageOrderTracker", () => {
           severity: "warn",
         },
       ]);
-    });
-
-    it("doesn't report out of order error when messages have been recomputed", () => {
-      const orderTracker = new MessageOrderTracker();
-      const playerState = playerStateWithMessages([message(7, 10), message(8, 9)]);
-      playerState.activeData!.messagesRecomputed = true;
-      const problems = orderTracker.update(playerState);
-
-      expect(problems).toEqual([]);
     });
 
     it("does not report an error when messages are in order", () => {

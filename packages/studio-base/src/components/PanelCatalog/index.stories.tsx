@@ -87,9 +87,11 @@ export default {
     if (args.inputValue) {
       await keyboard(args.inputValue);
     }
-    args.events?.map(async (keypress) => await keyboard(keypress));
+    args.events?.map(async (keypress) => {
+      await keyboard(keypress);
+    });
   },
-} as Meta<Args>;
+} satisfies Meta<Args>;
 
 type Story = StoryObj<Args>;
 

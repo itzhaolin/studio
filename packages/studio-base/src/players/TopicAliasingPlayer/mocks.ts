@@ -9,7 +9,6 @@ import {
   PlayerStateActiveData,
 } from "@foxglove/studio-base/players/types";
 
-// ts-prune-ignore-next
 export function mockMessage<T>(message: T, fields?: Partial<MessageEvent<T>>): MessageEvent<T> {
   return {
     topic: "topic",
@@ -21,7 +20,6 @@ export function mockMessage<T>(message: T, fields?: Partial<MessageEvent<T>>): M
   };
 }
 
-// ts-prune-ignore-next
 export function mockPlayerState(
   overrides?: Partial<PlayerState>,
   dataOverrides?: Partial<PlayerStateActiveData>,
@@ -35,6 +33,7 @@ export function mockPlayerState(
       topics: [],
       speed: 1,
       isPlaying: false,
+      repeatEnabled: false,
       topicStats: new Map(),
       startTime: { sec: 0, nsec: 0 },
       datatypes: new Map(),

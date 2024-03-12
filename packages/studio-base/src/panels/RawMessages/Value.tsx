@@ -15,11 +15,12 @@ import { withStyles, makeStyles } from "tss-react/mui";
 
 import HoverableIconButton from "@foxglove/studio-base/components/HoverableIconButton";
 import Stack from "@foxglove/studio-base/components/Stack";
-import { openSiblingPlotPanel, plotableRosTypes } from "@foxglove/studio-base/panels/Plot";
+import { openSiblingPlotPanel } from "@foxglove/studio-base/panels/Plot/openSiblingPlotPanel";
+import { plotableRosTypes } from "@foxglove/studio-base/panels/Plot/plotableRosTypes";
 import {
   openSiblingStateTransitionsPanel,
   transitionableRosTypes,
-} from "@foxglove/studio-base/panels/StateTransitions";
+} from "@foxglove/studio-base/panels/StateTransitions/openSiblingStateTransitionsPanel";
 import { OpenSiblingPanel } from "@foxglove/studio-base/types/panels";
 import clipboard from "@foxglove/studio-base/util/clipboard";
 
@@ -88,30 +89,35 @@ function Value(props: ValueProps): JSX.Element {
   const [copied, setCopied] = useState(false);
 
   const openPlotPanel = useCallback(
-    (pathSuffix: string) => () =>
-      openSiblingPlotPanel(openSiblingPanel, `${basePath}${pathSuffix}`),
+    (pathSuffix: string) => () => {
+      openSiblingPlotPanel(openSiblingPanel, `${basePath}${pathSuffix}`);
+    },
     [basePath, openSiblingPanel],
   );
 
   const openStateTransitionsPanel = useCallback(
-    (pathSuffix: string) => () =>
-      openSiblingStateTransitionsPanel(openSiblingPanel, `${basePath}${pathSuffix}`),
+    (pathSuffix: string) => () => {
+      openSiblingStateTransitionsPanel(openSiblingPanel, `${basePath}${pathSuffix}`);
+    },
     [basePath, openSiblingPanel],
   );
 
-  const onFilter = useCallback(
-    () => onTopicPathChange(`${basePath}${valueAction?.filterPath}`),
-    [basePath, valueAction, onTopicPathChange],
-  );
+  const onFilter = useCallback(() => {
+    onTopicPathChange(`${basePath}${valueAction?.filterPath}`);
+  }, [basePath, valueAction, onTopicPathChange]);
 
   const handleCopy = useCallback((value: string) => {
     clipboard
       .copy(value)
       .then(() => {
         setCopied(true);
-        timeOutID.current = setTimeout(() => setCopied(false), 1500);
+        timeOutID.current = setTimeout(() => {
+          setCopied(false);
+        }, 1500);
       })
-      .catch((e) => console.warn(e));
+      .catch((e) => {
+        console.warn(e);
+      });
   }, []);
 
   const availableActions = useMemo(() => {
@@ -122,7 +128,9 @@ function Value(props: ValueProps): JSX.Element {
         activeColor: copied ? "success" : "primary",
         tooltip: copied ? "Copied" : "Copy to Clipboard",
         icon: copied ? <CheckIcon fontSize="inherit" /> : <CopyAllIcon fontSize="inherit" />,
-        onClick: () => handleCopy(JSON.stringify(itemValue, copyMessageReplacer, 2) ?? ""),
+        onClick: () => {
+          handleCopy(JSON.stringify(itemValue, copyMessageReplacer, 2) ?? "");
+        },
       });
     }
     if (valueAction != undefined) {
@@ -206,8 +214,12 @@ function Value(props: ValueProps): JSX.Element {
       direction="row"
       alignItems="center"
       gap={0.25}
-      onPointerEnter={() => setPointerOver(true)}
-      onPointerLeave={() => setPointerOver(false)}
+      onPointerEnter={() => {
+        setPointerOver(true);
+      }}
+      onPointerLeave={() => {
+        setPointerOver(false);
+      }}
     >
       <HighlightedValue itemLabel={itemLabel} />
       {arrLabel}

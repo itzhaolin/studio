@@ -2,6 +2,8 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { t } from "i18next";
+import * as _ from "lodash-es";
 import * as THREE from "three";
 
 import { toNanoSec } from "@foxglove/rostime";
@@ -14,11 +16,15 @@ import { RenderableArrow } from "./markers/RenderableArrow";
 import { RenderableSphere } from "./markers/RenderableSphere";
 import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
 import { BaseUserData, Renderable } from "../Renderable";
-import { PartialMessage, PartialMessageEvent, SceneExtension } from "../SceneExtension";
+import {
+  onlyLastByTopicMessage,
+  PartialMessage,
+  PartialMessageEvent,
+  SceneExtension,
+} from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import { makeRgba, rgbaToCssString, stringToRgba } from "../color";
 import { POSE_IN_FRAME_DATATYPES } from "../foxglove";
-import { vecEqual } from "../math";
 import {
   normalizeHeader,
   normalizeMatrix6,
@@ -72,11 +78,6 @@ const DEFAULT_SETTINGS: LayerSettingsPose = {
   covarianceColor: DEFAULT_COVARIANCE_COLOR_STR,
 };
 
-const TYPE_OPTIONS = [
-  { label: "Axis", value: "axis" },
-  { label: "Arrow", value: "arrow" },
-];
-
 export type PoseUserData = BaseUserData & {
   settings: LayerSettingsPose;
   topic: string;
@@ -101,8 +102,9 @@ export class PoseRenderable extends Renderable<PoseUserData> {
 }
 
 export class Poses extends SceneExtension<PoseRenderable> {
-  public constructor(renderer: IRenderer) {
-    super("foxglove.Poses", renderer);
+  public static extensionId = "foxglove.Poses";
+  public constructor(renderer: IRenderer, name: string = Poses.extensionId) {
+    super(name, renderer);
   }
 
   public override getSubscriptions(): readonly AnyRendererSubscription[] {
@@ -110,17 +112,20 @@ export class Poses extends SceneExtension<PoseRenderable> {
       {
         type: "schema",
         schemaNames: POSE_STAMPED_DATATYPES,
-        subscription: { handler: this.#handlePoseStamped },
+        subscription: { handler: this.#handlePoseStamped, filterQueue: onlyLastByTopicMessage },
       },
       {
         type: "schema",
         schemaNames: POSE_IN_FRAME_DATATYPES,
-        subscription: { handler: this.#handlePoseInFrame },
+        subscription: { handler: this.#handlePoseInFrame, filterQueue: onlyLastByTopicMessage },
       },
       {
         type: "schema",
         schemaNames: POSE_WITH_COVARIANCE_STAMPED_DATATYPES,
-        subscription: { handler: this.#handlePoseWithCovariance },
+        subscription: {
+          handler: this.#handlePoseWithCovariance,
+          filterQueue: onlyLastByTopicMessage,
+        },
       },
     ];
   }
@@ -142,11 +147,19 @@ export class Poses extends SceneExtension<PoseRenderable> {
       const type = config.type ?? DEFAULT_TYPE;
 
       const fields: SettingsTreeFields = {
-        type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: type },
+        type: {
+          label: t("threeDee:type"),
+          input: "select",
+          options: [
+            { label: t("threeDee:poseDisplayTypeAxis"), value: "axis" },
+            { label: t("threeDee:poseDisplayTypeArrow"), value: "arrow" },
+          ],
+          value: type,
+        },
       };
       if (type === "axis") {
         fields["axisScale"] = {
-          label: "Scale",
+          label: t("threeDee:scale"),
           input: "number",
           step: 0.5,
           min: 0,
@@ -155,7 +168,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
         };
       } else {
         fields["arrowScale"] = {
-          label: "Scale",
+          label: t("threeDee:scale"),
           input: "vec3",
           labels: ["X", "Y", "Z"],
           step: 0.5,
@@ -163,7 +176,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
           value: config.arrowScale ?? DEFAULT_ARROW_SCALE,
         };
         fields["color"] = {
-          label: "Color",
+          label: t("threeDee:color"),
           input: "rgba",
           value: config.color ?? DEFAULT_COLOR_STR,
         };
@@ -174,13 +187,13 @@ export class Poses extends SceneExtension<PoseRenderable> {
         const covarianceColor = config.covarianceColor ?? DEFAULT_COVARIANCE_COLOR_STR;
 
         fields["showCovariance"] = {
-          label: "Covariance",
+          label: t("threeDee:covariance"),
           input: "boolean",
           value: showCovariance,
         };
         if (showCovariance) {
           fields["covarianceColor"] = {
-            label: "Covariance Color",
+            label: t("threeDee:covarianceColor"),
             input: "rgba",
             value: covarianceColor,
           };
@@ -312,7 +325,7 @@ export class Poses extends SceneExtension<PoseRenderable> {
     const axisOrArrowSettingsChanged =
       settings.type !== prevSettings.type ||
       settings.axisScale !== prevSettings.axisScale ||
-      !vecEqual(settings.arrowScale, prevSettings.arrowScale) ||
+      !_.isEqual(settings.arrowScale, prevSettings.arrowScale) ||
       settings.color !== prevSettings.color ||
       (!renderable.userData.arrow && !renderable.userData.axis);
 
@@ -438,7 +451,7 @@ function createSphereMarker(
   };
 }
 
-export function normalizePoseStamped(pose: PartialMessage<PoseStamped>): PoseStamped {
+function normalizePoseStamped(pose: PartialMessage<PoseStamped>): PoseStamped {
   return {
     header: normalizeHeader(pose.header),
     pose: normalizePose(pose.pose),

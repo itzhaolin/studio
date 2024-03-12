@@ -2,11 +2,11 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import CloseIcon from "@mui/icons-material/Close";
+import CancelIcon from "@mui/icons-material/Cancel";
 import SearchIcon from "@mui/icons-material/Search";
-import { IconButton, TextField } from "@mui/material";
+import { IconButton, InputAdornment, TextField } from "@mui/material";
 import fuzzySort from "fuzzysort";
-import { countBy, isEmpty } from "lodash";
+import * as _ from "lodash-es";
 import { forwardRef, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { makeStyles } from "tss-react/mui";
@@ -47,7 +47,7 @@ const useStyles = makeStyles()((theme) => {
 
 // sanity checks to help panel authors debug issues
 function verifyPanels(panels: readonly PanelInfo[]): void {
-  const panelTypes: Map<string, PanelInfo> = new Map();
+  const panelTypes = new Map<string, PanelInfo>();
   for (const panel of panels) {
     const { title, type, config } = mightActuallyBePartial(panel);
     const dispName = title ?? type ?? "<unnamed>";
@@ -56,7 +56,7 @@ function verifyPanels(panels: readonly PanelInfo[]): void {
     }
     const existingPanel = mightActuallyBePartial(panelTypes.get(type));
     if (existingPanel) {
-      const bothHaveEmptyConfigs = isEmpty(existingPanel.config) && isEmpty(config);
+      const bothHaveEmptyConfigs = _.isEmpty(existingPanel.config) && _.isEmpty(config);
       if (bothHaveEmptyConfigs) {
         const otherDisplayName = existingPanel.title ?? existingPanel.type ?? "<unnamed>";
         throw new Error(
@@ -101,7 +101,7 @@ export const PanelCatalog = forwardRef<HTMLDivElement, Props>(function PanelCata
   const namespacedPanels = useMemo(() => {
     // Remove namespace if panel title is unique.
     const panels = panelCatalog.getPanels();
-    const countByTitle = countBy(panels, (panel) => panel.title);
+    const countByTitle = _.countBy(panels, (panel) => panel.title);
     return panels.map((panel) => {
       if ((countByTitle[panel.title] ?? 0) > 1) {
         return panel;
@@ -197,7 +197,6 @@ export const PanelCatalog = forwardRef<HTMLDivElement, Props>(function PanelCata
         onPanelSelect({
           type: highlightedPanel.type,
           config: highlightedPanel.config,
-          relatedConfigs: highlightedPanel.relatedConfigs,
         });
       }
     },
@@ -214,6 +213,7 @@ export const PanelCatalog = forwardRef<HTMLDivElement, Props>(function PanelCata
       >
         <TextField
           fullWidth
+          variant="filled"
           placeholder={t("searchPanels")}
           value={searchQuery}
           onChange={handleSearchChange}
@@ -221,10 +221,20 @@ export const PanelCatalog = forwardRef<HTMLDivElement, Props>(function PanelCata
           autoFocus
           data-testid="panel-list-textfield"
           InputProps={{
-            startAdornment: <SearchIcon fontSize="small" color="primary" />,
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon fontSize="small" />
+              </InputAdornment>
+            ),
             endAdornment: searchQuery && (
-              <IconButton size="small" edge="end" onClick={() => setSearchQuery("")}>
-                <CloseIcon fontSize="small" />
+              <IconButton
+                size="small"
+                edge="end"
+                onClick={() => {
+                  setSearchQuery("");
+                }}
+              >
+                <CancelIcon fontSize="small" />
               </IconButton>
             ),
           }}

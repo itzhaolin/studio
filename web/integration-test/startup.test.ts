@@ -18,7 +18,7 @@ describe("startup", () => {
     const publicPath = path.join(__dirname, "..", ".webpack");
 
     const server = http.createServer(async (request, response) => {
-      return await serveHandler(request, response, {
+      await serveHandler(request, response, {
         public: publicPath,
       });
     });
@@ -35,25 +35,36 @@ describe("startup", () => {
 
     const browser = await chromium.launch();
     const page = await browser.newPage();
-    await page.goto(url);
-
-    await new Promise<void>((resolve, reject) => {
-      page.on("console", (message) => {
-        if (message.type() === "error") {
-          reject(new Error(message.text()));
-          return;
-        }
-        log.info(message.text());
-
-        if (message.text().includes("App rendered")) {
-          resolve();
-        }
+    await page.route("https://api.foxglove.dev/v1/studio-update?**", async (route) => {
+      await route.fulfill({
+        json: {},
       });
     });
+    await page.goto(url);
 
-    await browser.close();
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        page.on("console", (message) => {
+          if (message.type() === "error") {
+            reject(new Error(message.text()));
+            return;
+          }
+          log.info(message.text());
+
+          if (message.text().includes("App rendered")) {
+            // Wait for a few seconds for the app to render more components and detect if
+            // there are any errors after the initial app render
+            setTimeout(resolve, 2_000);
+          }
+        });
+      });
+    } finally {
+      await browser.close();
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
   }, 15_000);
 });

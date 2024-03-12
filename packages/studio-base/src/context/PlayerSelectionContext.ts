@@ -50,9 +50,6 @@ export interface IDataSourceFactory {
   hidden?: boolean;
   warning?: string | JSX.Element;
 
-  /** Whether to wait for a user to be logged in before initializing this source. */
-  currentUserRequired?: boolean;
-
   sampleLayout?: LayoutData;
 
   formConfig?: {
@@ -106,10 +103,10 @@ export interface PlayerSelection {
   selectedSource?: IDataSourceFactory;
 
   /** List of available data sources */
-  availableSources: IDataSourceFactory[];
+  availableSources: readonly IDataSourceFactory[];
 
   /** Recently selected sources */
-  recentSources: RecentSource[];
+  recentSources: readonly RecentSource[];
 }
 
 const PlayerSelectionContext = createContext<PlayerSelection>({

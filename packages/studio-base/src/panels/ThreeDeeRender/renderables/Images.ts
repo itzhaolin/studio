@@ -2,6 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { t } from "i18next";
 import { assert } from "ts-essentials";
 
 import { MultiMap, filterMap } from "@foxglove/den/collection";
@@ -10,8 +11,13 @@ import Logger from "@foxglove/log";
 import { toNanoSec } from "@foxglove/rostime";
 import { CameraCalibration, CompressedImage, RawImage } from "@foxglove/schemas";
 import { SettingsTreeAction, SettingsTreeFields } from "@foxglove/studio";
+import { ALL_SUPPORTED_IMAGE_SCHEMAS } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/ImageMode/ImageMode";
 
-import { IMAGE_RENDERABLE_DEFAULT_SETTINGS, ImageRenderable } from "./Images/ImageRenderable";
+import {
+  IMAGE_RENDERABLE_DEFAULT_SETTINGS,
+  ImageRenderable,
+  ImageUserData,
+} from "./Images/ImageRenderable";
 import { ALL_CAMERA_INFO_SCHEMAS, AnyImage } from "./Images/ImageTypes";
 import {
   normalizeCompressedImage,
@@ -22,7 +28,7 @@ import {
 import { getTopicMatchPrefix, sortPrefixMatchesToFront } from "./Images/topicPrefixMatching";
 import { cameraInfosEqual, normalizeCameraInfo } from "./projections";
 import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
-import { PartialMessageEvent, SceneExtension } from "../SceneExtension";
+import { PartialMessageEvent, SceneExtension, onlyLastByTopicMessage } from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import {
   CAMERA_CALIBRATION_DATATYPES,
@@ -56,6 +62,7 @@ const NO_CAMERA_INFO_ERR = "NoCameraInfo";
 const CAMERA_MODEL = "CameraModel";
 
 export class Images extends SceneExtension<ImageRenderable> {
+  public static extensionId = "foxglove.Images";
   /* All known camera info topics */
   #cameraInfoTopics = new Set<string>();
 
@@ -73,8 +80,10 @@ export class Images extends SceneExtension<ImageRenderable> {
    */
   #cameraInfoByTopic = new Map<string, CameraInfo>();
 
-  public constructor(renderer: IRenderer) {
-    super("foxglove.Images", renderer);
+  protected supportedImageSchemas = ALL_SUPPORTED_IMAGE_SCHEMAS;
+
+  public constructor(renderer: IRenderer, name: string = Images.extensionId) {
+    super(name, renderer);
     this.renderer.on("topicsChanged", this.#handleTopicsChanged);
     this.#handleTopicsChanged();
   }
@@ -97,22 +106,31 @@ export class Images extends SceneExtension<ImageRenderable> {
       {
         type: "schema",
         schemaNames: ROS_IMAGE_DATATYPES,
-        subscription: { handler: this.#handleRosRawImage },
+        subscription: { handler: this.#handleRosRawImage, filterQueue: onlyLastByTopicMessage },
       },
       {
         type: "schema",
         schemaNames: ROS_COMPRESSED_IMAGE_DATATYPES,
-        subscription: { handler: this.#handleRosCompressedImage },
+        subscription: {
+          handler: this.#handleRosCompressedImage,
+          filterQueue: onlyLastByTopicMessage,
+        },
       },
       {
         type: "schema",
         schemaNames: RAW_IMAGE_DATATYPES,
-        subscription: { handler: this.#handleRawImage },
+        subscription: {
+          handler: this.#handleRawImage,
+          filterQueue: onlyLastByTopicMessage,
+        },
       },
       {
         type: "schema",
         schemaNames: COMPRESSED_IMAGE_DATATYPES,
-        subscription: { handler: this.#handleCompressedImage },
+        subscription: {
+          handler: this.#handleCompressedImage,
+          filterQueue: onlyLastByTopicMessage,
+        },
       },
     ];
   }
@@ -137,14 +155,7 @@ export class Images extends SceneExtension<ImageRenderable> {
     const handler = this.handleSettingsAction;
     const entries: SettingsTreeEntry[] = [];
     for (const topic of this.renderer.topics ?? []) {
-      if (
-        !(
-          topicIsConvertibleToSchema(topic, ROS_IMAGE_DATATYPES) ||
-          topicIsConvertibleToSchema(topic, ROS_COMPRESSED_IMAGE_DATATYPES) ||
-          topicIsConvertibleToSchema(topic, RAW_IMAGE_DATATYPES) ||
-          topicIsConvertibleToSchema(topic, COMPRESSED_IMAGE_DATATYPES)
-        )
-      ) {
+      if (!topicIsConvertibleToSchema(topic, this.supportedImageSchemas)) {
         continue;
       }
       const imageTopic = topic.name;
@@ -158,12 +169,32 @@ export class Images extends SceneExtension<ImageRenderable> {
       cameraInfoOptions.sort();
       sortPrefixMatchesToFront(cameraInfoOptions, imageTopic, (option) => option.value);
 
-      // prettier-ignore
       const fields: SettingsTreeFields = {
-        cameraInfoTopic: { label: "Camera Info", input: "select", options: cameraInfoOptions, value: config.cameraInfoTopic },
-        distance: { label: "Distance", input: "number", placeholder: String(IMAGE_RENDERABLE_DEFAULT_SETTINGS.distance), step: 0.1, precision: PRECISION_DISTANCE, value: config.distance },
-        planarProjectionFactor: { label: "Planar Projection Factor", input: "number", placeholder: String(IMAGE_RENDERABLE_DEFAULT_SETTINGS.planarProjectionFactor), min: 0, max: 1, step: 0.1, precision: 2, value: config.planarProjectionFactor },
-        color: { label: "Color", input: "rgba", value: config.color },
+        cameraInfoTopic: {
+          label: t("threeDee:cameraInfo"),
+          input: "select",
+          options: cameraInfoOptions,
+          value: config.cameraInfoTopic,
+        },
+        distance: {
+          label: t("threeDee:distance"),
+          input: "number",
+          placeholder: String(IMAGE_RENDERABLE_DEFAULT_SETTINGS.distance),
+          step: 0.1,
+          precision: PRECISION_DISTANCE,
+          value: config.distance,
+        },
+        planarProjectionFactor: {
+          label: t("threeDee:planarProjectionFactor"),
+          input: "number",
+          placeholder: String(IMAGE_RENDERABLE_DEFAULT_SETTINGS.planarProjectionFactor),
+          min: 0,
+          max: 1,
+          step: 0.1,
+          precision: 2,
+          value: config.planarProjectionFactor,
+        },
+        color: { label: t("threeDee:color"), input: "rgba", value: config.color },
       };
 
       entries.push({
@@ -254,30 +285,30 @@ export class Images extends SceneExtension<ImageRenderable> {
   };
 
   #handleRosRawImage = (messageEvent: PartialMessageEvent<RosImage>): void => {
-    this.#handleImage(messageEvent, normalizeRosImage(messageEvent.message));
+    this.handleImage(messageEvent, normalizeRosImage(messageEvent.message));
   };
 
   #handleRosCompressedImage = (messageEvent: PartialMessageEvent<RosCompressedImage>): void => {
-    this.#handleImage(messageEvent, normalizeRosCompressedImage(messageEvent.message));
+    this.handleImage(messageEvent, normalizeRosCompressedImage(messageEvent.message));
   };
 
   #handleRawImage = (messageEvent: PartialMessageEvent<RawImage>): void => {
-    this.#handleImage(messageEvent, normalizeRawImage(messageEvent.message));
+    this.handleImage(messageEvent, normalizeRawImage(messageEvent.message));
   };
 
   #handleCompressedImage = (messageEvent: PartialMessageEvent<CompressedImage>): void => {
-    this.#handleImage(messageEvent, normalizeCompressedImage(messageEvent.message));
+    this.handleImage(messageEvent, normalizeCompressedImage(messageEvent.message));
   };
 
-  #handleImage = (messageEvent: PartialMessageEvent<AnyImage>, image: AnyImage): void => {
+  protected handleImage = (messageEvent: PartialMessageEvent<AnyImage>, image: AnyImage): void => {
     const imageTopic = messageEvent.topic;
     const receiveTime = toNanoSec(messageEvent.receiveTime);
     const frameId = "header" in image ? image.header.frame_id : image.frame_id;
 
     const renderable = this.#getImageRenderable(imageTopic, receiveTime, image, frameId);
-    renderable.setImage(image, DEFAULT_BITMAP_WIDTH);
 
     renderable.userData.receiveTime = receiveTime;
+    renderable.setImage(image, DEFAULT_BITMAP_WIDTH);
     // Auto-select settings.cameraInfoTopic if it's not already set
     const settings = renderable.userData.settings;
     if (settings.cameraInfoTopic == undefined) {
@@ -404,7 +435,7 @@ export class Images extends SceneExtension<ImageRenderable> {
       | Partial<LayerSettingsImage>
       | undefined;
 
-    renderable = new ImageRenderable(imageTopic, this.renderer, {
+    renderable = this.initRenderable(imageTopic, {
       receiveTime,
       messageTime: image ? toNanoSec("header" in image ? image.header.stamp : image.timestamp) : 0n,
       frameId: this.renderer.normalizeFrameId(frameId),
@@ -424,5 +455,8 @@ export class Images extends SceneExtension<ImageRenderable> {
     this.add(renderable);
     this.renderables.set(imageTopic, renderable);
     return renderable;
+  }
+  protected initRenderable(topicName: string, userData: ImageUserData): ImageRenderable {
+    return new ImageRenderable(topicName, this.renderer, userData);
   }
 }

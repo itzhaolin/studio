@@ -10,8 +10,8 @@
 //   This source code is licensed under the Apache License, Version 2.0,
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
-
 import { useTheme } from "@mui/material";
+import { expect } from "@storybook/jest";
 import { StoryObj, Meta } from "@storybook/react";
 import { fireEvent, within } from "@storybook/testing-library";
 
@@ -19,15 +19,11 @@ import Panel from "@foxglove/studio-base/components/Panel";
 import { PanelCatalog as PanelCatalogComponent } from "@foxglove/studio-base/components/PanelCatalog";
 import PanelLayout from "@foxglove/studio-base/components/PanelLayout";
 import PanelToolbar from "@foxglove/studio-base/components/PanelToolbar";
-import LayoutStorageContext from "@foxglove/studio-base/context/LayoutStorageContext";
 import { PanelCatalog, PanelInfo } from "@foxglove/studio-base/context/PanelCatalogContext";
 import {
   nestedTabLayoutFixture,
   nestedTabLayoutFixture2,
 } from "@foxglove/studio-base/panels/Tab/nestedTabLayoutFixture";
-import LayoutManagerProvider from "@foxglove/studio-base/providers/LayoutManagerProvider";
-import LayoutManager from "@foxglove/studio-base/services/LayoutManager/LayoutManager";
-import MockLayoutStorage from "@foxglove/studio-base/services/MockLayoutStorage";
 import { TabPanelConfig } from "@foxglove/studio-base/src/types/layouts";
 import PanelSetup, { Fixture } from "@foxglove/studio-base/stories/PanelSetup";
 import { ExpectedResult } from "@foxglove/studio-base/stories/storyHelpers";
@@ -105,32 +101,27 @@ export default {
           ...storyArgs
         },
       } = ctx;
-      const storage = new MockLayoutStorage(LayoutManager.LOCAL_STORAGE_NAMESPACE, []);
       const panelCatalog = !disableMockCatalog ? new MockPanelCatalog() : undefined;
       const theme = useTheme();
 
       return (
-        <LayoutStorageContext.Provider value={storage}>
-          <LayoutManagerProvider>
-            <PanelSetup panelCatalog={panelCatalog} fixture={fixtureArg}>
-              <Wrapped {...storyArgs} />
-              {showPanelList && (
-                <div
-                  style={{
-                    backgroundColor: theme.palette.background.paper,
-                    borderInlineStart: `1px solid ${theme.palette.divider}`,
-                  }}
-                >
-                  <PanelCatalogComponent onPanelSelect={() => {}} />
-                </div>
-              )}
-            </PanelSetup>
-          </LayoutManagerProvider>
-        </LayoutStorageContext.Provider>
+        <PanelSetup panelCatalog={panelCatalog} fixture={fixtureArg}>
+          <Wrapped {...storyArgs} />
+          {showPanelList && (
+            <div
+              style={{
+                backgroundColor: theme.palette.background.paper,
+                borderInlineStart: `1px solid ${theme.palette.divider}`,
+              }}
+            >
+              <PanelCatalogComponent onPanelSelect={() => {}} />
+            </div>
+          )}
+        </PanelSetup>
       );
     },
   ],
-} as Meta<StoryArgs>;
+} satisfies Meta<StoryArgs>;
 
 type Story = StoryObj<StoryArgs>;
 
@@ -165,7 +156,7 @@ export const PickingAPanelFromThePanelListCreatesANewTabIfThereAreNone: Story = 
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    const panel = await canvas.findAllByTestId("panel-menu-item Some Panel");
+    const panel = await canvas.findAllByTestId("panel-grid-card Some Panel");
     fireEvent.click(panel[0]!);
   },
 };
@@ -184,7 +175,7 @@ export const PickingAPanelFromThePanelListUpdatesTheTabsLayout: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    const panel = await canvas.findAllByTestId("panel-menu-item Some Panel");
+    const panel = await canvas.findAllByTestId("panel-grid-card Some Panel");
     fireEvent.click(panel[0]!);
   },
 };
@@ -407,5 +398,55 @@ export const SupportsDraggingBetweenTabsAnywhereInTheLayout: Story = {
     const target = targetTab.querySelector(".drop-target.left");
 
     dragAndDrop(dragHandle[0]!, target!);
+  },
+};
+
+export const DraggingOntoTabRootDoesNotReplaceTabContents: Story = {
+  render: () => <PanelLayout />,
+  args: {
+    fixture: {
+      topics: [],
+      datatypes: new Map(),
+      frame: {},
+      layout: {
+        direction: "row",
+        splitPercentage: 50,
+        first: "Tab!a",
+        second: "Sample1!2xqjjqw",
+      },
+      savedProps: {
+        "Tab!a": {
+          activeTabIdx: 0,
+          tabs: [
+            {
+              title: "First",
+              layout: {
+                direction: "row",
+                splitPercentage: 50,
+                first: "unknown!inner1",
+                second: "unknown!inner2",
+              },
+            },
+          ],
+        },
+      },
+    } satisfies Fixture,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const sample1 = await canvas.findByTestId("panel-mouseenter-container Sample1!2xqjjqw");
+    const targetTab = await canvas.findByTestId("panel-mouseenter-container Tab!a");
+
+    const dragHandle = await within(sample1).findAllByTestId("panel-menu");
+
+    dragAndDrop(dragHandle[0]!, targetTab);
+
+    // Drag & drop should not have replaced existing tab contents
+    await expect(
+      await canvas.findByTestId("panel-mouseenter-container unknown!inner1"),
+    ).toBeInTheDocument();
+    await expect(
+      await canvas.findByTestId("panel-mouseenter-container unknown!inner2"),
+    ).toBeInTheDocument();
   },
 };

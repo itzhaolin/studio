@@ -9,26 +9,17 @@ import { useGuaranteedContext } from "@foxglove/hooks";
 import { AppSettingsTab } from "@foxglove/studio-base/components/AppSettingsDialog/AppSettingsDialog";
 import { DataSourceDialogItem } from "@foxglove/studio-base/components/DataSourceDialog";
 import { IDataSourceFactory } from "@foxglove/studio-base/context/PlayerSelectionContext";
-
-export const SidebarItemKeys = [
-  "account",
-  "add-panel",
-  "app-bar-tour",
-  "app-settings",
-  "connection",
-  "extensions",
-  "help",
-  "layouts",
-  "panel-settings",
-  "studio-logs-settings",
-  "variables",
-] as const;
-export type SidebarItemKey = (typeof SidebarItemKeys)[number];
+import { PlaybackSpeed } from "@foxglove/studio-base/players/types";
 
 export const LeftSidebarItemKeys = ["panel-settings", "topics", "problems"] as const;
 export type LeftSidebarItemKey = (typeof LeftSidebarItemKeys)[number];
 
-export const RightSidebarItemKeys = ["events", "variables", "studio-logs-settings"] as const;
+export const RightSidebarItemKeys = [
+  "events",
+  "variables",
+  "studio-logs-settings",
+  "performance",
+] as const;
 export type RightSidebarItemKey = (typeof RightSidebarItemKeys)[number];
 
 export type WorkspaceContextStore = {
@@ -49,11 +40,9 @@ export type WorkspaceContextStore = {
   };
   playbackControls: {
     repeat: boolean;
+    speed: PlaybackSpeed;
   };
   sidebars: {
-    legacy: {
-      item: undefined | SidebarItemKey;
-    };
     left: {
       item: undefined | LeftSidebarItemKey;
       open: boolean;
@@ -75,20 +64,14 @@ WorkspaceContext.displayName = "WorkspaceContext";
 
 export const WorkspaceStoreSelectors = {
   selectPanelSettingsOpen: (store: WorkspaceContextStore): boolean => {
-    return (
-      store.sidebars.legacy.item === "panel-settings" ||
-      (store.sidebars.left.open && store.sidebars.left.item === "panel-settings")
-    );
+    return store.sidebars.left.open && store.sidebars.left.item === "panel-settings";
   },
 };
 
 /**
  * Fetches values from the workspace store.
  */
-export function useWorkspaceStore<T>(
-  selector: (store: WorkspaceContextStore) => T,
-  equalityFn?: (a: T, b: T) => boolean,
-): T {
+export function useWorkspaceStore<T>(selector: (store: WorkspaceContextStore) => T): T {
   const context = useGuaranteedContext(WorkspaceContext);
-  return useStore(context, selector, equalityFn);
+  return useStore(context, selector);
 }

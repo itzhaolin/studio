@@ -7,6 +7,7 @@ import {
   Checkbox,
   Dialog,
   DialogContent,
+  DialogTitle,
   FormControlLabel,
   Grid,
   Typography,
@@ -32,6 +33,11 @@ const useStyles = makeStyles()((theme) => ({
   paper: {
     maxWidth: 480,
   },
+  dialogTitle: {
+    textAlign: "center",
+    fontSize: theme.typography.h2.fontSize,
+    paddingBlock: theme.spacing(3),
+  },
 }));
 
 export function LaunchPreferenceScreen(): ReactElement {
@@ -39,27 +45,20 @@ export function LaunchPreferenceScreen(): ReactElement {
   const [globalPreference, setGlobalPreference] = useAppConfigurationValue<string | undefined>(
     AppSetting.LAUNCH_PREFERENCE,
   );
-  const [_, setSessionPreference] = useSessionStorageValue(AppSetting.LAUNCH_PREFERENCE);
+  const [, setSessionPreference] = useSessionStorageValue(AppSetting.LAUNCH_PREFERENCE);
   const [rememberPreference, setRememberPreference] = useState(globalPreference != undefined);
 
   async function launchInWeb() {
     setSessionPreference(LaunchPreferenceValue.WEB); // always set session preference to allow overriding the URL param
-    if (rememberPreference) {
-      await setGlobalPreference(LaunchPreferenceValue.WEB);
-    }
+    await setGlobalPreference(rememberPreference ? LaunchPreferenceValue.WEB : undefined);
   }
 
   async function launchInDesktop() {
     setSessionPreference(LaunchPreferenceValue.DESKTOP); // always set session preference to allow overriding the URL param
-    if (rememberPreference) {
-      await setGlobalPreference(LaunchPreferenceValue.DESKTOP);
-    }
+    await setGlobalPreference(rememberPreference ? LaunchPreferenceValue.DESKTOP : undefined);
   }
 
-  async function toggleRememberPreference() {
-    if (rememberPreference) {
-      await setGlobalPreference(undefined);
-    }
+  function toggleRememberPreference() {
     setRememberPreference(!rememberPreference);
   }
 
@@ -80,11 +79,7 @@ export function LaunchPreferenceScreen(): ReactElement {
 
   return (
     <Dialog open classes={{ paper: classes.paper }}>
-      <Stack paddingX={2} paddingTop={3}>
-        <Typography align="center" variant="h2" fontWeight={600}>
-          Launch Foxglove Studio
-        </Typography>
-      </Stack>
+      <DialogTitle className={classes.dialogTitle}>Launch Foxglove Studio</DialogTitle>
       <DialogContent>
         <Grid container spacing={1}>
           {actions.map((action) => (
@@ -94,7 +89,6 @@ export function LaunchPreferenceScreen(): ReactElement {
                 fullWidth
                 color="inherit"
                 variant="outlined"
-                size="large"
                 onClick={action.onClick}
               >
                 <Stack flex="auto" zeroMinWidth>

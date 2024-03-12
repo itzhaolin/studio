@@ -10,6 +10,7 @@
 
 import { ChartOptions } from "chart.js";
 import Hammer from "hammerjs";
+import * as R from "ramda";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useMountedState } from "react-use";
 import { assert } from "ts-essentials";
@@ -24,7 +25,9 @@ import Rpc, { createLinkedChannels } from "@foxglove/studio-base/util/Rpc";
 import WebWorkerManager from "@foxglove/studio-base/util/WebWorkerManager";
 import { mightActuallyBePartial } from "@foxglove/studio-base/util/mightActuallyBePartial";
 
-import { ChartData, RpcElement, RpcScales } from "./types";
+import { TypedChartData, ChartData, RpcElement, RpcScales } from "./types";
+
+type PartialUpdate = Partial<ChartUpdateMessage>;
 
 const log = Logger.getLogger(__filename);
 
@@ -42,7 +45,8 @@ export type OnClickArg = {
 };
 
 type Props = {
-  data: ChartData;
+  data?: ChartData;
+  typedData?: TypedChartData;
   options: ChartOptions;
   isBoundsReset: boolean;
   type: "scatter";
@@ -110,13 +114,24 @@ function Chart(props: Props): JSX.Element {
   const panEnabled =
     (props.options.plugins?.zoom as ZoomPluginOptions | undefined)?.pan?.enabled ?? false;
 
-  const { type, data, isBoundsReset, options, width, height, onStartRender, onFinishRender } =
-    props;
+  const {
+    type,
+    data,
+    typedData,
+    isBoundsReset,
+    options,
+    width,
+    height,
+    onStartRender,
+    onFinishRender,
+  } = props;
 
   const sendWrapperRef = useRef<RpcSend | undefined>();
   const rpcSendRef = useRef<RpcSend | undefined>();
 
   const hasPannedSinceMouseDown = useRef(false);
+  const queuedUpdates = useRef<PartialUpdate[]>([]);
+  const isSending = useRef<boolean>(false);
   const previousUpdateMessage = useRef<Record<string, unknown>>({});
 
   useLayoutEffect(() => {
@@ -188,7 +203,7 @@ function Chart(props: Props): JSX.Element {
   // if they are unchanged from a previous initialization or update.
   const getNewUpdateMessage = useCallback(() => {
     const prev = previousUpdateMessage.current;
-    const out: Partial<ChartUpdateMessage> = {};
+    const out: PartialUpdate = {};
 
     // NOTE(Roman): I don't know why this happens but when I initialize a chart using some data
     // and width/height of 0. Even when I later send an update for correct width/height the chart
@@ -202,6 +217,9 @@ function Chart(props: Props): JSX.Element {
 
     if (prev.data !== data) {
       prev.data = out.data = data;
+    }
+    if (prev.typedData !== typedData) {
+      prev.typedData = out.typedData = typedData;
     }
     if (prev.options !== options) {
       prev.options = out.options = options;
@@ -221,78 +239,108 @@ function Chart(props: Props): JSX.Element {
     }
 
     return out;
-  }, [data, height, options, isBoundsReset, width]);
+  }, [data, typedData, height, options, isBoundsReset, width]);
 
-  // Update the chart with a new set of data
-  const updateChart = useCallback(
-    async (update: Partial<ChartUpdateMessage>) => {
-      // first time initialization
-      if (!initialized.current) {
-        assert(canvasRef.current == undefined, "Canvas has already been initialized");
-        assert(containerRef.current, "No container ref");
-        assert(sendWrapperRef.current, "No RPC");
-
-        const canvas = document.createElement("canvas");
-        canvas.style.width = "100%";
-        canvas.style.height = "100%";
-        canvas.width = update.width ?? 0;
-        canvas.height = update.height ?? 0;
-        containerRef.current.appendChild(canvas);
-
-        canvasRef.current = canvas;
-        initialized.current = true;
-
-        onStartRender?.();
-        const offscreenCanvas =
-          typeof canvas.transferControlToOffscreen === "function"
-            ? canvas.transferControlToOffscreen()
-            : canvas;
-        const scales = await sendWrapperRef.current<RpcScales>(
-          "initialize",
-          {
-            node: offscreenCanvas,
-            type,
-            data: update.data,
-            options: update.options,
-            devicePixelRatio,
-            width: update.width,
-            height: update.height,
-          },
-          [
-            // If this is actually a HTMLCanvasElement then it will not be transferred because we
-            // don't use a worker
-            offscreenCanvas as OffscreenCanvas,
-          ],
-        );
-
-        // once we are initialized, we can allow other handlers to send to the rpc endpoint
-        rpcSendRef.current = sendWrapperRef.current;
-
-        maybeUpdateScales(scales);
-        onFinishRender?.();
+  // Flush all new updates to the worker, coalescing them together if there is
+  // more than one.
+  const flushUpdates = useCallback(
+    async (send: RpcSend | undefined) => {
+      if (send == undefined || isSending.current) {
         return;
       }
 
-      assert(rpcSendRef.current, "No RPC");
+      isSending.current = true;
 
-      onStartRender?.();
-      const scales = await rpcSendRef.current<RpcScales>("update", update);
-      maybeUpdateScales(scales);
-      onFinishRender?.();
+      while (queuedUpdates.current.length > 0) {
+        const { current: updates } = queuedUpdates;
+        if (updates.length === 0) {
+          break;
+        }
+
+        // We merge all of the pending updates together to do as few renders as
+        // possible when we fall behind
+        const coalesced = R.mergeAll(updates);
+        onStartRender?.();
+        const scales = await send<RpcScales>("update", coalesced);
+        maybeUpdateScales(scales);
+        onFinishRender?.();
+        queuedUpdates.current = queuedUpdates.current.slice(updates.length);
+      }
+
+      isSending.current = false;
     },
-    [maybeUpdateScales, onFinishRender, onStartRender, type],
+    [maybeUpdateScales, onFinishRender, onStartRender],
   );
 
-  // Prevent updating the chart if we are already updating the chart to avoid backing up stale updates
-  const running = useRef(false);
+  // Update the chart with a new set of data
+  const updateChart = useCallback(
+    async (update: PartialUpdate) => {
+      if (initialized.current) {
+        queuedUpdates.current = [...queuedUpdates.current, update];
+        await flushUpdates(rpcSendRef.current);
+        return;
+      }
+
+      // first time initialization
+      assert(canvasRef.current == undefined, "Canvas has already been initialized");
+      assert(containerRef.current, "No container ref");
+      assert(sendWrapperRef.current, "No RPC");
+
+      const canvas = document.createElement("canvas");
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      canvas.width = update.width ?? 0;
+      canvas.height = update.height ?? 0;
+      containerRef.current.appendChild(canvas);
+
+      canvasRef.current = canvas;
+      initialized.current = true;
+
+      onStartRender?.();
+      const offscreenCanvas =
+        typeof canvas.transferControlToOffscreen === "function"
+          ? canvas.transferControlToOffscreen()
+          : canvas;
+      const scales = await sendWrapperRef.current<RpcScales>(
+        "initialize",
+        {
+          node: offscreenCanvas,
+          type,
+          data: update.data,
+          typedData: update.typedData,
+          options: update.options,
+          devicePixelRatio,
+          width: update.width,
+          height: update.height,
+        },
+        [
+          // If this is actually a HTMLCanvasElement then it will not be transferred because we
+          // don't use a worker
+          offscreenCanvas as OffscreenCanvas,
+        ],
+      );
+      maybeUpdateScales(scales);
+      onFinishRender?.();
+
+      // We cannot rely solely on the call to `initialize`, since it doesn't
+      // actually produce the first frame. However, if we append this update to
+      // the end, it will overwrite updates that have been queued _since we
+      // started initializing_. This is incorrect behavior and can set the
+      // scales incorrectly on weak devices.
+      //
+      // To prevent this from happening, we put this update at the beginning of
+      // the queue so that it gets coalesced properly.
+      queuedUpdates.current = [update, ...queuedUpdates.current];
+      await flushUpdates(sendWrapperRef.current);
+      // once we are initialized, we can allow other handlers to send to the rpc endpoint
+      rpcSendRef.current = sendWrapperRef.current;
+    },
+    [maybeUpdateScales, onFinishRender, onStartRender, type, flushUpdates],
+  );
+
   const [updateError, setUpdateError] = useState<Error | undefined>();
   useLayoutEffect(() => {
     if (!containerRef.current) {
-      return;
-    }
-
-    // Do we want to queue up this change or do we assume another update will trigger it
-    if (running.current) {
       return;
     }
 
@@ -303,16 +351,11 @@ function Chart(props: Props): JSX.Element {
       return;
     }
 
-    running.current = true;
-    updateChart(newUpdate)
-      .catch((err: Error) => {
-        if (isMounted()) {
-          setUpdateError(err);
-        }
-      })
-      .finally(() => {
-        running.current = false;
-      });
+    updateChart(newUpdate).catch((err: Error) => {
+      if (isMounted()) {
+        setUpdateError(err);
+      }
+    });
   }, [getNewUpdateMessage, isMounted, updateChart]);
 
   useLayoutEffect(() => {

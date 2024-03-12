@@ -12,26 +12,21 @@
 //   You may not use this file except in compliance with the License.
 
 import { Checkbox, FormControlLabel, Typography, useTheme } from "@mui/material";
-// eslint-disable-next-line no-restricted-imports
-import { first, get, isEqual, last, padStart } from "lodash";
+import * as _ from "lodash-es";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactHoverObserver from "react-hover-observer";
 import Tree from "react-json-tree";
 import { makeStyles } from "tss-react/mui";
 
-import { Immutable } from "@foxglove/studio";
+import { parseMessagePath, MessagePathStructureItem, MessagePath } from "@foxglove/message-path";
+import { Immutable, SettingsTreeAction } from "@foxglove/studio";
 import { useDataSourceInfo } from "@foxglove/studio-base/PanelAPI";
 import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import useGetItemStringWithTimezone from "@foxglove/studio-base/components/JsonTree/useGetItemStringWithTimezone";
 import {
-  MessagePathStructureItem,
-  RosPath,
-} from "@foxglove/studio-base/components/MessagePathSyntax/constants";
-import {
   messagePathStructures,
   traverseStructure,
 } from "@foxglove/studio-base/components/MessagePathSyntax/messagePathsForDatatype";
-import parseRosPath from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
 import { MessagePathDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
 import { useMessageDataItem } from "@foxglove/studio-base/components/MessagePathSyntax/useMessageDataItem";
 import Panel from "@foxglove/studio-base/components/Panel";
@@ -44,10 +39,10 @@ import getDiff, {
   diffLabelsByLabelText,
 } from "@foxglove/studio-base/panels/RawMessages/getDiff";
 import { Topic } from "@foxglove/studio-base/players/types";
+import { usePanelSettingsTreeUpdate } from "@foxglove/studio-base/providers/PanelStateContextProvider";
 import { SaveConfig } from "@foxglove/studio-base/types/panels";
+import { enumValuesByDatatypeAndField } from "@foxglove/studio-base/util/enums";
 import { useJsonTreeTheme } from "@foxglove/studio-base/util/globalConstants";
-import { enumValuesByDatatypeAndField } from "@foxglove/studio-base/util/selectors";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
 import { DiffSpan } from "./DiffSpan";
 import DiffStats from "./DiffStats";
@@ -59,8 +54,8 @@ import {
   getStructureItemForPath,
   getValueActionForValue,
 } from "./getValueActionForValue";
-import { Constants, RawMessagesPanelConfig } from "./types";
-import { DATA_ARRAY_PREVIEW_LIMIT, generateDeepKeyPaths } from "./utils";
+import { Constants, NodeState, RawMessagesPanelConfig } from "./types";
+import { DATA_ARRAY_PREVIEW_LIMIT, generateDeepKeyPaths, toggleExpansion } from "./utils";
 
 type Props = {
   config: Immutable<RawMessagesPanelConfig>;
@@ -78,24 +73,10 @@ const dataWithoutWrappingArray = (data: unknown) => {
   return isSingleElemArray(data) && typeof data[0] === "object" ? data[0] : data;
 };
 
-// lazy messages don't have own properties so we need to invoke "toJSON" to get the message
-// as a regular object
-function maybeDeepParse(val: unknown) {
-  if (typeof val === "object" && val != undefined && "toJSON" in val) {
-    return (val as { toJSON: () => unknown }).toJSON();
-  }
-  return val;
-}
-
 const useStyles = makeStyles()((theme) => ({
   topic: {
-    fontFamily: fonts.SANS_SERIF,
+    fontFamily: theme.typography.body1.fontFamily,
     fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
-  },
-  big: {
-    "&.MuiTypography-root": {
-      fontFeatureSettings: `${theme.typography.fontFeatureSettings}, "zero"`,
-    },
   },
   hoverObserver: {
     display: "inline-flex",
@@ -111,8 +92,28 @@ function RawMessages(props: Props) {
   const jsonTreeTheme = useJsonTreeTheme();
   const { config, saveConfig } = props;
   const { openSiblingPanel } = usePanelContext();
-  const { topicPath, diffMethod, diffTopicPath, diffEnabled, showFullMessageForDiff } = config;
+  const { topicPath, diffMethod, diffTopicPath, diffEnabled, showFullMessageForDiff, fontSize } =
+    config;
   const { topics, datatypes } = useDataSourceInfo();
+  const updatePanelSettingsTree = usePanelSettingsTreeUpdate();
+  const { setMessagePathDropConfig } = usePanelContext();
+
+  useEffect(() => {
+    setMessagePathDropConfig({
+      getDropStatus(paths) {
+        if (paths.length !== 1) {
+          return { canDrop: false };
+        }
+        return { canDrop: true, effect: "replace" };
+      },
+      handleDrop(paths) {
+        const path = paths[0];
+        if (path) {
+          saveConfig({ topicPath: path.path });
+        }
+      },
+    });
+  }, [setMessagePathDropConfig, saveConfig]);
 
   const defaultGetItemString = useGetItemStringWithTimezone();
   const getItemString = useMemo(
@@ -125,23 +126,29 @@ function RawMessages(props: Props) {
     [defaultGetItemString, diffEnabled],
   );
 
-  const topicRosPath: RosPath | undefined = useMemo(() => parseRosPath(topicPath), [topicPath]);
+  const topicRosPath: MessagePath | undefined = useMemo(
+    () => parseMessagePath(topicPath),
+    [topicPath],
+  );
   const topic: Topic | undefined = useMemo(
     () => topicRosPath && topics.find(({ name }) => name === topicRosPath.topicName),
     [topicRosPath, topics],
   );
+
+  const structures = useMemo(() => messagePathStructures(datatypes), [datatypes]);
+
   const rootStructureItem: MessagePathStructureItem | undefined = useMemo(() => {
     if (!topic || !topicRosPath || topic.schemaName == undefined) {
       return;
     }
-    return traverseStructure(
-      messagePathStructures(datatypes)[topic.schemaName],
-      topicRosPath.messagePath,
-    ).structureItem;
-  }, [datatypes, topic, topicRosPath]);
+    return traverseStructure(structures[topic.schemaName], topicRosPath.messagePath).structureItem;
+  }, [structures, topic, topicRosPath]);
 
   const [expansion, setExpansion] = useState(config.expansion);
-  const matchedMessages = useMessageDataItem(topicPath, { historySize: 2 });
+
+  // Pass an empty path to useMessageDataItem if our path doesn't resolve to a valid topic to avoid
+  // spamming the message pipeline with useless subscription requests.
+  const matchedMessages = useMessageDataItem(topic ? topicPath : "", { historySize: 2 });
   const diffMessages = useMessageDataItem(diffEnabled ? diffTopicPath : "");
 
   const diffTopicObj = diffMessages[0];
@@ -152,10 +159,10 @@ function RawMessages(props: Props) {
   const baseItem = inTimetickDiffMode ? prevTickObj : currTickObj;
   const diffItem = inTimetickDiffMode ? currTickObj : diffTopicObj;
 
-  const autoExpandPaths = useMemo(() => {
+  const nodes = useMemo(() => {
     if (baseItem) {
       const data = dataWithoutWrappingArray(baseItem.queriedData.map(({ value }) => value));
-      return generateDeepKeyPaths(maybeDeepParse(data), 5);
+      return generateDeepKeyPaths(data, 5);
     } else {
       return new Set<string>();
     }
@@ -168,7 +175,10 @@ function RawMessages(props: Props) {
     if (expansion === "all") {
       return false;
     }
-    if (typeof expansion === "object" && Object.values(expansion).some((v) => v === "c")) {
+    if (
+      typeof expansion === "object" &&
+      Object.values(expansion).some((v) => v === NodeState.Collapsed)
+    ) {
       return true;
     } else {
       return false;
@@ -200,24 +210,9 @@ function RawMessages(props: Props) {
 
   const onLabelClick = useCallback(
     (keypath: (string | number)[]) => {
-      const key = keypath.join("~");
-      setExpansion((old) => {
-        if (old === "all") {
-          return { [key]: "c" };
-        } else if (old === "none") {
-          return { [key]: "e" };
-        } else if (old == undefined) {
-          return { [key]: autoExpandPaths.has(key) ? "c" : "e" };
-        } else {
-          if (old[key]) {
-            return { ...old, [key]: old[key] === "c" ? "e" : "c" };
-          } else {
-            return { ...old, [key]: autoExpandPaths.has(key) ? "c" : "e" };
-          }
-        }
-      });
+      setExpansion((old) => toggleExpansion(old ?? "all", nodes, keypath.join("~")));
     },
-    [autoExpandPaths],
+    [nodes],
   );
 
   useEffect(() => {
@@ -247,7 +242,7 @@ function RawMessages(props: Props) {
         const array = itemValue as Uint8Array;
         const itemPart = array.slice(0, DATA_ARRAY_PREVIEW_LIMIT).join(", ");
         const length = array.length;
-        arrLabel = `(${length}) [${itemPart}${length >= DATA_ARRAY_PREVIEW_LIMIT ? ", ..." : ""}] `;
+        arrLabel = `(${length}) [${itemPart}${length >= DATA_ARRAY_PREVIEW_LIMIT ? ", …" : ""}] `;
         itemLabel = itemValue.constructor.name;
       }
       if (constantName != undefined) {
@@ -259,7 +254,7 @@ function RawMessages(props: Props) {
       // A nanosecond label of 099999999 makes it easier to realize this is 0.09 seconds compared to
       // 99999999 which requires some counting to reamize this is also 0.09
       if (keyPath[0] === "nsec" && typeof itemValue === "number") {
-        itemLabel = padStart(itemLabel, 9, "0");
+        itemLabel = _.padStart(itemLabel, 9, "0");
       }
 
       return { arrLabel, itemLabel };
@@ -291,6 +286,8 @@ function RawMessages(props: Props) {
     [getValueLabels, onTopicPathChange, openSiblingPanel],
   );
 
+  const enumMapping = useMemo(() => enumValuesByDatatypeAndField(datatypes), [datatypes]);
+
   const valueRenderer = useCallback(
     (
       structureItem: MessagePathStructureItem | undefined,
@@ -302,9 +299,9 @@ function RawMessages(props: Props) {
     ) => (
       <ReactHoverObserver className={classes.hoverObserver}>
         {({ isHovering }: { isHovering: boolean }) => {
-          const lastKeyPath = last(keyPath) as number;
+          const lastKeyPath = _.last(keyPath) as number;
           let valueAction: ValueAction | undefined;
-          if (isHovering && structureItem) {
+          if (isHovering) {
             valueAction = getValueActionForValue(
               data[lastKeyPath],
               structureItem,
@@ -324,7 +321,6 @@ function RawMessages(props: Props) {
               const keyPathIndex = keyPath.findIndex((key) => typeof key === "string");
               const field = keyPath[keyPathIndex];
               if (typeof field === "string") {
-                const enumMapping = enumValuesByDatatypeAndField(datatypes);
                 const datatype = childStructureItem.datatype;
                 constantName = enumMapping[datatype]?.[field]?.[String(itemValue)];
               }
@@ -352,7 +348,7 @@ function RawMessages(props: Props) {
         }}
       </ReactHoverObserver>
     ),
-    [classes.hoverObserver, datatypes, getValueLabels, onTopicPathChange, openSiblingPanel],
+    [classes.hoverObserver, enumMapping, getValueLabels, onTopicPathChange, openSiblingPanel],
   );
 
   const renderSingleTopicOrDiffOutput = useCallback(() => {
@@ -365,14 +361,14 @@ function RawMessages(props: Props) {
       }
 
       const joinedPath = keypath.join("~");
-      if (expansion && expansion[joinedPath] === "c") {
+      if (expansion && expansion[joinedPath] === NodeState.Collapsed) {
         return false;
       }
-      if (expansion && expansion[joinedPath] === "e") {
+      if (expansion && expansion[joinedPath] === NodeState.Expanded) {
         return true;
       }
 
-      return autoExpandPaths.has(joinedPath);
+      return true;
     };
 
     if (topicPath.length === 0) {
@@ -385,7 +381,7 @@ function RawMessages(props: Props) {
     }
 
     if (!baseItem) {
-      return <EmptyState>Waiting for next message</EmptyState>;
+      return <EmptyState>Waiting for next message…</EmptyState>;
     }
 
     const data = dataWithoutWrappingArray(baseItem.queriedData.map(({ value }) => value));
@@ -399,12 +395,10 @@ function RawMessages(props: Props) {
     const diffData =
       diffItem && dataWithoutWrappingArray(diffItem.queriedData.map(({ value }) => value));
 
-    // json parse/stringify round trip is used to deep parse data and diff data which may be lazy messages
-    // lazy messages have non-enumerable getters but do have a toJSON method to turn themselves into an object
     const diff = diffEnabled
       ? getDiff({
-          before: maybeDeepParse(data),
-          after: maybeDeepParse(diffData),
+          before: data,
+          after: diffData,
           idLabel: undefined,
           showFullMessageForDiff,
         })
@@ -428,15 +422,14 @@ function RawMessages(props: Props) {
         />
         {shouldDisplaySingleVal ? (
           <Typography
-            className={classes.big}
             variant="h1"
-            fontWeight="bold"
-            whiteSpace="pre-line"
+            fontSize={fontSize}
+            whiteSpace="pre-wrap"
             style={{ wordWrap: "break-word" }}
           >
             <MaybeCollapsedValue itemLabel={String(singleVal)} />
           </Typography>
-        ) : diffEnabled && isEqual({}, diff) ? (
+        ) : diffEnabled && _.isEqual({}, diff) ? (
           <EmptyState>No difference found</EmptyState>
         ) : (
           <>
@@ -448,7 +441,9 @@ function RawMessages(props: Props) {
                   <Checkbox
                     size="small"
                     defaultChecked
-                    onChange={() => saveConfig({ showFullMessageForDiff: !showFullMessageForDiff })}
+                    onChange={() => {
+                      saveConfig({ showFullMessageForDiff: !showFullMessageForDiff });
+                    }}
                   />
                 }
                 label="Show full msg"
@@ -457,7 +452,7 @@ function RawMessages(props: Props) {
             <Tree
               labelRenderer={(raw) => (
                 <>
-                  <DiffSpan>{first(raw)}</DiffSpan>
+                  <DiffSpan>{_.first(raw)}</DiffSpan>
                   {/* https://stackoverflow.com/questions/62319014/make-text-selection-treat-adjacent-elements-as-separate-words */}
                   <span style={{ fontSize: 0 }}>&nbsp;</span>
                 </>
@@ -519,7 +514,7 @@ function RawMessages(props: Props) {
                 ) {
                   return addedValue ?? changedValue ?? deletedValue;
                 }
-                return maybeDeepParse(rawVal);
+                return rawVal;
               }}
               theme={{
                 ...jsonTreeTheme,
@@ -528,6 +523,7 @@ function RawMessages(props: Props) {
                 nestedNode: ({ style }, keyPath: any) => {
                   const baseStyle = {
                     ...style,
+                    fontSize,
                     paddingTop: 2,
                     paddingBottom: 2,
                     marginTop: 2,
@@ -548,7 +544,7 @@ function RawMessages(props: Props) {
                     textDecoration =
                       keyPath[0] === diffLabels.DELETED.labelText ? "line-through" : "none";
                   }
-                  const nestedObj = get(diff, keyPath.slice().reverse(), {});
+                  const nestedObj = _.get(diff, keyPath.slice().reverse(), {});
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
                   const nestedObjKey = Object.keys(nestedObj)[0];
                   if (nestedObjKey != undefined && diffLabelsByLabelText[nestedObjKey]) {
@@ -577,13 +573,17 @@ function RawMessages(props: Props) {
                 }),
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 value: ({ style }, _nodeType, keyPath: any) => {
-                  const baseStyle = { ...style, textDecoration: "inherit" };
+                  const baseStyle = {
+                    ...style,
+                    fontSize,
+                    textDecoration: "inherit",
+                  };
                   if (!diffEnabled) {
                     return { style: baseStyle };
                   }
                   let backgroundColor;
                   let textDecoration;
-                  const nestedObj = get(diff, keyPath.slice().reverse(), {});
+                  const nestedObj = _.get(diff, keyPath.slice().reverse(), {});
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
                   const nestedObjKey = Object.keys(nestedObj)[0];
                   if (nestedObjKey != undefined && diffLabelsByLabelText[nestedObjKey]) {
@@ -613,10 +613,9 @@ function RawMessages(props: Props) {
       </Stack>
     );
   }, [
-    autoExpandPaths,
     baseItem,
-    classes.big,
     classes.topic,
+    fontSize,
     diffEnabled,
     diffItem,
     diffMethod,
@@ -634,6 +633,47 @@ function RawMessages(props: Props) {
     topicPath,
     valueRenderer,
   ]);
+
+  const actionHandler = useCallback(
+    (action: SettingsTreeAction) => {
+      if (action.action === "update") {
+        if (action.payload.path[0] === "general") {
+          if (action.payload.path[1] === "fontSize") {
+            saveConfig({
+              fontSize:
+                action.payload.value != undefined ? (action.payload.value as number) : undefined,
+            });
+          }
+        }
+      }
+    },
+    [saveConfig],
+  );
+
+  useEffect(() => {
+    updatePanelSettingsTree({
+      actionHandler,
+      nodes: {
+        general: {
+          label: "General",
+          fields: {
+            fontSize: {
+              label: "Font size",
+              input: "select",
+              options: [
+                { label: "auto", value: undefined },
+                ...Constants.FONT_SIZE_OPTIONS.map((value) => ({
+                  label: `${value} px`,
+                  value,
+                })),
+              ],
+              value: fontSize,
+            },
+          },
+        },
+      },
+    });
+  }, [actionHandler, fontSize, updatePanelSettingsTree]);
 
   return (
     <Stack flex="auto" overflow="hidden" position="relative">
@@ -660,6 +700,7 @@ const defaultConfig: RawMessagesPanelConfig = {
   diffTopicPath: "",
   showFullMessageForDiff: false,
   topicPath: "",
+  fontSize: undefined,
 };
 
 export default Panel(

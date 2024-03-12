@@ -8,7 +8,7 @@ import { toRFC3339String } from "@foxglove/rostime";
 import { MessageEvent } from "@foxglove/studio";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
 import { BlockLoader } from "@foxglove/studio-base/players/IterablePlayer/BlockLoader";
-import { IIterableSource } from "@foxglove/studio-base/players/IterablePlayer/IIterableSource";
+import { IDeserializedIterableSource } from "@foxglove/studio-base/players/IterablePlayer/IIterableSource";
 import PlayerProblemManager from "@foxglove/studio-base/players/PlayerProblemManager";
 import {
   AdvertiseOptions,
@@ -30,14 +30,14 @@ const MAX_BLOCKS = 400;
 const CAPABILITIES: string[] = [PlayerCapabilities.playbackControl];
 
 class BenchmarkPlayer implements Player {
-  #source: IIterableSource;
+  #source: IDeserializedIterableSource;
   #name: string;
   #listener?: (state: PlayerState) => Promise<void>;
   #subscriptions: SubscribePayload[] = [];
   #blockLoader?: BlockLoader;
   #problemManager = new PlayerProblemManager();
 
-  public constructor(name: string, source: IIterableSource) {
+  public constructor(name: string, source: IDeserializedIterableSource) {
     this.#name = name;
     this.#source = source;
   }
@@ -96,7 +96,7 @@ class BenchmarkPlayer implements Player {
     }
 
     do {
-      log.info("Waiting for topic subscriptions...");
+      log.info("Waiting for topic subscriptions…");
 
       // Allow the layout to subscribe to any messages it needs
       await delay(500);
@@ -114,6 +114,7 @@ class BenchmarkPlayer implements Player {
           currentTime: startTime,
           startTime,
           isPlaying: false,
+          repeatEnabled: false,
           speed: 1,
           lastSeekTime: 1,
           endTime,
@@ -125,9 +126,11 @@ class BenchmarkPlayer implements Player {
     } while (this.#subscriptions.length === 0);
 
     // Get all messages for our subscriptions
-    const subscribeTopics = this.#subscriptions.map((sub) => sub.topic);
-    const topicsForPreload = new Set(
-      filterMap(this.#subscriptions, (sub) => (sub.preloadType === "full" ? sub.topic : undefined)),
+    const subscribeTopics = new Map(this.#subscriptions.map((sub) => [sub.topic, sub]));
+    const topicsForPreload = new Map(
+      filterMap(this.#subscriptions, (sub) =>
+        sub.preloadType === "full" ? [sub.topic, sub] : undefined,
+      ),
     );
     const iterator = this.#source.messageIterator({
       topics: subscribeTopics,
@@ -212,6 +215,7 @@ class BenchmarkPlayer implements Player {
           endTime,
           currentTime: msgEvent.receiveTime,
           isPlaying: true,
+          repeatEnabled: false,
           speed: 1,
           lastSeekTime: 1,
           topics,
@@ -261,6 +265,7 @@ class BenchmarkPlayer implements Player {
             endTime,
             currentTime: seekToMessage.receiveTime,
             isPlaying: false,
+            repeatEnabled: false,
             speed: 1,
             lastSeekTime: Date.now(),
             topics,

@@ -14,7 +14,7 @@ import {
   Map as LeafMap,
   TileLayer,
 } from "leaflet";
-import { difference, groupBy, isEqual, minBy, partition, union } from "lodash";
+import * as _ from "lodash-es";
 import memoizeWeak from "memoize-weak";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useResizeDetector } from "react-resize-detector";
@@ -29,10 +29,12 @@ import {
   Subscription,
   Topic,
 } from "@foxglove/studio";
+import EmptyState from "@foxglove/studio-base/components/EmptyState";
 import Stack from "@foxglove/studio-base/components/Stack";
 import FilteredPointLayer, {
   POINT_MARKER_RADIUS,
 } from "@foxglove/studio-base/panels/Map/FilteredPointLayer";
+import ThemeProvider from "@foxglove/studio-base/theme/ThemeProvider";
 import { darkColor, lightColor, lineColors } from "@foxglove/studio-base/util/plotColors";
 
 import { buildSettingsTree, Config, validateCustomUrl } from "./config";
@@ -56,6 +58,7 @@ const memoizedFilterMessages = memoizeWeak((msgs: readonly MessageEvent[]) =>
 
 function MapPanel(props: MapPanelProps): JSX.Element {
   const { context } = props;
+  const [colorScheme, setColorScheme] = useState<"dark" | "light">("light");
 
   const mapContainerRef = useRef<HTMLDivElement>(ReactNull);
 
@@ -107,12 +110,12 @@ function MapPanel(props: MapPanelProps): JSX.Element {
   const [currentMapMessages, setCurrentMapMessages] = useState<MapPanelMessage[]>([]);
 
   const [allGeoMessages, allNavMessages] = useMemo(
-    () => partition(allMapMessages, isGeoJSONMessage),
+    () => _.partition(allMapMessages, isGeoJSONMessage),
     [allMapMessages],
   );
 
   const [currentGeoMessages, currentNavMessages] = useMemo(
-    () => partition(currentMapMessages, isGeoJSONMessage),
+    () => _.partition(currentMapMessages, isGeoJSONMessage),
     [currentMapMessages],
   );
 
@@ -180,8 +183,8 @@ function MapPanel(props: MapPanelProps): JSX.Element {
           produce((draft) => {
             draft.disabledTopics =
               value === true
-                ? difference(draft.disabledTopics, [topic])
-                : union(draft.disabledTopics, [topic]);
+                ? _.difference(draft.disabledTopics, [topic])
+                : _.union(draft.disabledTopics, [topic]);
           }),
         );
       }
@@ -372,6 +375,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
     context.watch("currentFrame");
     context.watch("allFrames");
     context.watch("previewTime");
+    context.watch("colorScheme");
 
     // The render event handler updates the state for our messages an triggers a component render
     //
@@ -385,7 +389,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
         // Changing the topic list clears all map layers so we try to preserve reference identity
         // if the contents of the topic list haven't changed.
         setTopics((oldTopics) => {
-          return isEqual(oldTopics, renderState.topics) ? oldTopics : renderState.topics ?? [];
+          return _.isEqual(oldTopics, renderState.topics) ? oldTopics : renderState.topics ?? [];
         });
       }
 
@@ -397,6 +401,10 @@ function MapPanel(props: MapPanelProps): JSX.Element {
       // Only update the current frame if we have new messages.
       if (renderState.currentFrame && renderState.currentFrame.length > 0) {
         setCurrentMapMessages(renderState.currentFrame.filter(isValidMapMessage));
+      }
+
+      if (renderState.colorScheme) {
+        setColorScheme(renderState.colorScheme);
       }
     };
 
@@ -453,8 +461,9 @@ function MapPanel(props: MapPanelProps): JSX.Element {
       const parsed = parseGeoJSON(message.message.geojson);
       for (const { object, style } of parsed) {
         geoJSON(object, {
-          onEachFeature: (feature: Feature, layer) =>
-            addGeoFeatureEventHandlers(feature, message, layer),
+          onEachFeature: (feature: Feature, layer) => {
+            addGeoFeatureEventHandlers(feature, message, layer);
+          },
           style: config.topicColors[message.topic]
             ? { color: config.topicColors[message.topic], ...style }
             : style,
@@ -519,7 +528,9 @@ function MapPanel(props: MapPanelProps): JSX.Element {
 
       allGeoMessages
         .filter((message) => message.topic === topic)
-        .forEach((message) => addGeoJsonMessage(message, topicLayer.allFrames));
+        .forEach((message) => {
+          addGeoJsonMessage(message, topicLayer.allFrames);
+        });
     }
   }, [
     addGeoJsonMessage,
@@ -539,7 +550,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
       return;
     }
 
-    const navByTopic = groupBy(currentNavMessages, (msg) => msg.topic);
+    const navByTopic = _.groupBy(currentNavMessages, (msg) => msg.topic);
     for (const [topic, messages] of Object.entries(navByTopic)) {
       const topicLayer = topicLayers.get(topic);
       if (!topicLayer) {
@@ -547,7 +558,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
       }
 
       topicLayer.currentFrame.clearLayers();
-      const [fixEvents, noFixEvents] = partition(messages, hasFix);
+      const [fixEvents, noFixEvents] = _.partition(messages, hasFix);
 
       const pointLayerNoFix = FilteredPointLayer({
         map: currentMap,
@@ -571,7 +582,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
       topicLayer.currentFrame.addLayer(pointLayerFix);
     }
 
-    const geoByTopic = groupBy(currentGeoMessages, (msg) => msg.topic);
+    const geoByTopic = _.groupBy(currentGeoMessages, (msg) => msg.topic);
     for (const [topic, messages] of Object.entries(geoByTopic)) {
       const topicLayer = topicLayers.get(topic);
       if (topicLayer) {
@@ -601,7 +612,7 @@ function MapPanel(props: MapPanelProps): JSX.Element {
     const prevNavMessages = allNavMessages.filter(
       (message) => toSec(message.receiveTime) <= previewTime,
     );
-    const event = minBy(prevNavMessages, (message) => previewTime - toSec(message.receiveTime));
+    const event = _.minBy(prevNavMessages, (message) => previewTime - toSec(message.receiveTime));
     if (!event) {
       return;
     }
@@ -696,27 +707,20 @@ function MapPanel(props: MapPanelProps): JSX.Element {
   }, [renderDone]);
 
   return (
-    <Stack ref={sizeRef} fullHeight fullWidth position="relative">
-      {!center && (
+    <ThemeProvider isDark={colorScheme === "dark"}>
+      <Stack ref={sizeRef} fullHeight fullWidth position="relative">
+        {!center && <EmptyState>Waiting for first GPS point...</EmptyState>}
         <Stack
-          alignItems="center"
-          justifyContent="center"
           position="absolute"
-          style={{ top: 0, right: 0, bottom: 0, left: 0 }}
-        >
-          Waiting for first GPS point...
-        </Stack>
-      )}
-      <Stack
-        position="absolute"
-        ref={mapContainerRef}
-        style={{
-          inset: 0,
-          cursor: "auto",
-          visibility: center ? "visible" : "hidden",
-        }}
-      />
-    </Stack>
+          ref={mapContainerRef}
+          style={{
+            inset: 0,
+            cursor: "auto",
+            visibility: center ? "visible" : "hidden",
+          }}
+        />
+      </Stack>
+    </ThemeProvider>
   );
 }
 

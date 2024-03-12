@@ -5,36 +5,39 @@
 import { StoryFn, StoryObj } from "@storybook/react";
 import { ReactNode } from "react";
 
-import CurrentUserContext, {
+import BaseUserContext, {
   CurrentUser,
-  User,
-} from "@foxglove/studio-base/context/CurrentUserContext";
+  UserType,
+} from "@foxglove/studio-base/context/BaseUserContext";
 import PlayerSelectionContext, {
   PlayerSelection,
 } from "@foxglove/studio-base/context/PlayerSelectionContext";
+import MockCurrentLayoutProvider from "@foxglove/studio-base/providers/CurrentLayoutProvider/MockCurrentLayoutProvider";
 import WorkspaceContextProvider from "@foxglove/studio-base/providers/WorkspaceContextProvider";
 
 import { DataSourceDialog } from "./DataSourceDialog";
 
 const Wrapper = (Story: StoryFn): JSX.Element => {
   return (
-    <WorkspaceContextProvider
-      initialState={{
-        dialogs: {
-          dataSource: {
-            activeDataSource: undefined,
-            item: "start",
-            open: true,
+    <MockCurrentLayoutProvider>
+      <WorkspaceContextProvider
+        initialState={{
+          dialogs: {
+            dataSource: {
+              activeDataSource: undefined,
+              item: "start",
+              open: true,
+            },
+            preferences: {
+              initialTab: undefined,
+              open: false,
+            },
           },
-          preferences: {
-            initialTab: undefined,
-            open: false,
-          },
-        },
-      }}
-    >
-      <Story />
-    </WorkspaceContextProvider>
+        }}
+      >
+        <Story />
+      </WorkspaceContextProvider>
+    </MockCurrentLayoutProvider>
   );
 };
 
@@ -44,25 +47,6 @@ export default {
   parameters: { colorScheme: "dark" },
   decorators: [Wrapper],
 };
-
-function fakeUser(type: "free" | "paid" | "enterprise"): User {
-  return {
-    id: "user-1",
-    email: "user@example.com",
-    orgId: "org_id",
-    orgDisplayName: "Orgalorg",
-    orgSlug: "org",
-    orgPaid: type === "paid" || type === "enterprise",
-    org: {
-      id: "org_id",
-      slug: "org",
-      displayName: "Orgalorg",
-      isEnterprise: type === "enterprise",
-      allowsUploads: true,
-      supportsEdgeSites: type === "enterprise",
-    },
-  };
-}
 
 // Connection
 const playerSelection: PlayerSelection = {
@@ -90,8 +74,8 @@ const playerSelection: PlayerSelection = {
     },
     {
       id: "5555",
-      title: "2369",
-      label: "Velodyne Lidar",
+      title: "ws://1.2.3.4:8765",
+      label: "Foxglove WebSocket",
     },
     {
       id: "6666",
@@ -119,13 +103,16 @@ const playerSelection: PlayerSelection = {
   ],
 };
 
-function CurrentUserWrapper(props: { children: ReactNode; user?: User | undefined }): JSX.Element {
+function CurrentUserWrapper(props: {
+  children: ReactNode;
+  userType?: UserType | undefined;
+}): JSX.Element {
   const value: CurrentUser = {
-    currentUser: props.user,
+    currentUserType: props.userType ?? "unauthenticated",
     signIn: () => undefined,
     signOut: async () => undefined,
   };
-  return <CurrentUserContext.Provider value={value}>{props.children}</CurrentUserContext.Provider>;
+  return <BaseUserContext.Provider value={value}>{props.children}</BaseUserContext.Provider>;
 }
 
 const Default = (): JSX.Element => <DataSourceDialog backdropAnimation={false} />;
@@ -192,10 +179,8 @@ export const UserPrivateJapanese: StoryObj = {
 
 export const UserAuthedFree: StoryObj = {
   render: () => {
-    const freeUser = fakeUser("free");
-
     return (
-      <CurrentUserWrapper user={freeUser}>
+      <CurrentUserWrapper userType="authenticated-free">
         <PlayerSelectionContext.Provider value={playerSelection}>
           <DataSourceDialog backdropAnimation={false} />
         </PlayerSelectionContext.Provider>
@@ -219,10 +204,8 @@ export const UserAuthedFreeJapanese: StoryObj = {
 
 export const UserAuthedPaid: StoryObj = {
   render: () => {
-    const freeUser = fakeUser("paid");
-
     return (
-      <CurrentUserWrapper user={freeUser}>
+      <CurrentUserWrapper userType="authenticated-team">
         <PlayerSelectionContext.Provider value={playerSelection}>
           <DataSourceDialog backdropAnimation={false} />
         </PlayerSelectionContext.Provider>

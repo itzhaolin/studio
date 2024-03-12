@@ -11,24 +11,21 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { memoize } from "lodash";
-import memoizeWeak from "memoize-weak";
+import * as _ from "lodash-es";
 
+import {
+  MessagePathFilter,
+  quoteFieldNameIfNeeded,
+  MessagePathPart,
+  PrimitiveType,
+  MessagePathStructureItem,
+  MessagePathStructureItemMessage,
+} from "@foxglove/message-path";
 import { Immutable } from "@foxglove/studio";
-import { MessagePathFilter } from "@foxglove/studio-base/components/MessagePathSyntax/constants";
 import { isTypicalFilterName } from "@foxglove/studio-base/components/MessagePathSyntax/isTypicalFilterName";
-import { quoteFieldNameIfNeeded } from "@foxglove/studio-base/components/MessagePathSyntax/parseRosPath";
 import { RosDatatypes } from "@foxglove/studio-base/types/RosDatatypes";
 import { assertNever } from "@foxglove/studio-base/util/assertNever";
 import naturalSort from "@foxglove/studio-base/util/naturalSort";
-
-import {
-  MessagePathPart,
-  rosPrimitives,
-  RosPrimitive,
-  MessagePathStructureItem,
-  MessagePathStructureItemMessage,
-} from "./constants";
 
 const STRUCTURE_ITEM_INTEGER_TYPES = [
   "int8",
@@ -41,8 +38,25 @@ const STRUCTURE_ITEM_INTEGER_TYPES = [
   "uint64",
 ];
 
-function isRosPrimitive(type: string): type is RosPrimitive {
-  return rosPrimitives.includes(type as RosPrimitive);
+function isPrimitiveType(type: string): type is PrimitiveType {
+  // casting _as_ PrimitiveType here to have typescript error if add a case to the union
+  switch (type as PrimitiveType) {
+    case "bool":
+    case "int8":
+    case "uint8":
+    case "int16":
+    case "uint16":
+    case "int32":
+    case "uint32":
+    case "int64":
+    case "uint64":
+    case "float32":
+    case "float64":
+    case "string":
+      return true;
+  }
+
+  return false;
 }
 
 function structureItemIsIntegerPrimitive(item: MessagePathStructureItem) {
@@ -73,17 +87,10 @@ function structureItemIsIntegerPrimitive(item: MessagePathStructureItem) {
 //     }
 //   }
 // }
-let lastDatatypes: Immutable<RosDatatypes> | undefined;
-let lastStructures: Record<string, MessagePathStructureItemMessage> | undefined;
 export function messagePathStructures(
   datatypes: Immutable<RosDatatypes>,
 ): Record<string, MessagePathStructureItemMessage> {
-  if (lastDatatypes === datatypes && lastStructures) {
-    return lastStructures;
-  }
-
-  lastDatatypes = undefined;
-  const structureFor = memoize(
+  const structureFor = _.memoize(
     (datatype: string, seenDatatypes: string[]): MessagePathStructureItemMessage => {
       const nextByName: Record<string, MessagePathStructureItem> = {};
       const rosDatatype = datatypes.get(datatype);
@@ -111,16 +118,16 @@ export function messagePathStructures(
 
         throw new Error(`datatype not found: "${datatype}"`);
       }
-      rosDatatype.definitions.forEach((msgField) => {
+      for (const msgField of rosDatatype.definitions) {
         if (msgField.isConstant === true) {
-          return;
+          continue;
         }
 
         if (seenDatatypes.includes(msgField.type)) {
-          return;
+          continue;
         }
 
-        const next: MessagePathStructureItem = isRosPrimitive(msgField.type)
+        const next: MessagePathStructureItem = isPrimitiveType(msgField.type)
           ? {
               structureType: "primitive",
               primitiveType: msgField.type,
@@ -133,17 +140,16 @@ export function messagePathStructures(
         } else {
           nextByName[msgField.name] = next;
         }
-      });
+      }
       return { structureType: "message", nextByName, datatype };
     },
   );
 
-  lastStructures = {};
+  const structures: Record<string, MessagePathStructureItemMessage> = {};
   for (const [datatype] of datatypes) {
-    lastStructures[datatype] = structureFor(datatype, []);
+    structures[datatype] = structureFor(datatype, []);
   }
-  lastDatatypes = datatypes; // Set at the very end, in case there's an error earlier.
-  return lastStructures;
+  return structures;
 }
 
 export function validTerminatingStructureItem(
@@ -160,11 +166,12 @@ export function validTerminatingStructureItem(
   );
 }
 
-// Given a datatype, the array of datatypes, and a list of valid types,
-// list out all valid strings for the `messagePath` part of the path (sorted).
-export function messagePathsForDatatype(
-  datatype: string,
-  datatypes: Immutable<RosDatatypes>,
+/**
+ * Given a datatype, the array of datatypes, and a list of valid types, list out all valid strings
+ * for a MessagePathStructure and its corresponding structure item.
+ */
+export function messagePathsForStructure(
+  structure: MessagePathStructureItemMessage,
   {
     validTypes,
     noMultiSlices,
@@ -174,12 +181,12 @@ export function messagePathsForDatatype(
     noMultiSlices?: boolean;
     messagePath?: MessagePathPart[];
   } = {},
-): string[] {
+): { path: string; terminatingStructureItem: MessagePathStructureItem }[] {
   let clonedMessagePath = [...messagePath];
-  const messagePaths: string[] = [];
+  const messagePaths: { path: string; terminatingStructureItem: MessagePathStructureItem }[] = [];
   function traverse(structureItem: MessagePathStructureItem, builtString: string) {
     if (validTerminatingStructureItem(structureItem, validTypes)) {
-      messagePaths.push(builtString);
+      messagePaths.push({ path: builtString, terminatingStructureItem: structureItem });
     }
     if (structureItem.structureType === "message") {
       for (const [name, item] of Object.entries(structureItem.nextByName)) {
@@ -208,16 +215,14 @@ export function messagePathsForDatatype(
             clonedMessagePath = clonedMessagePath.filter(
               (pathPart) => pathPart !== matchingFilterPart,
             );
-            traverse(
-              structureItem.next,
-              `${builtString}[:]{${typicalFilterName}==${
-                typeof matchingFilterPart.value === "object"
-                  ? `$${matchingFilterPart.value.variableName}`
-                  : matchingFilterPart.value
-              }}`,
-            );
+            traverse(structureItem.next, `${builtString}[:]{${matchingFilterPart.repr}}`);
           } else if (structureItemIsIntegerPrimitive(typicalFilterValue)) {
             traverse(structureItem.next, `${builtString}[:]{${typicalFilterName}==0}`);
+          } else if (
+            typicalFilterValue.structureType === "primitive" &&
+            typicalFilterValue.primitiveType === "string"
+          ) {
+            traverse(structureItem.next, `${builtString}[:]{${typicalFilterName}==""}`);
           } else {
             traverse(structureItem.next, `${builtString}[0]`);
           }
@@ -233,11 +238,9 @@ export function messagePathsForDatatype(
       }
     }
   }
-  const structureItem = messagePathStructures(datatypes)[datatype];
-  if (structureItem != undefined) {
-    traverse(structureItem, "");
-  }
-  return messagePaths.sort(naturalSort());
+
+  traverse(structure, "");
+  return messagePaths.sort(naturalSort("path"));
 }
 
 export type StructureTraversalResult = {
@@ -254,57 +257,54 @@ export type StructureTraversalResult = {
 //
 // We use memoizeWeak because it works with multiple arguments (lodash's memoize
 // does not) and does not hold onto objects as strongly (it uses WeakMap).
-export const traverseStructure = memoizeWeak(
-  (
-    initialStructureItem: MessagePathStructureItem | undefined,
-    messagePath: MessagePathPart[],
-  ): StructureTraversalResult => {
-    let structureItem = initialStructureItem;
+export const traverseStructure = (
+  initialStructureItem: MessagePathStructureItem | undefined,
+  messagePath: MessagePathPart[],
+): StructureTraversalResult => {
+  let structureItem = initialStructureItem;
+  if (!structureItem) {
+    return { valid: false, msgPathPart: undefined, structureItem: undefined };
+  }
+  for (const msgPathPart of messagePath) {
     if (!structureItem) {
-      return { valid: false, msgPathPart: undefined, structureItem: undefined };
+      return { valid: false, msgPathPart, structureItem };
     }
-    for (const msgPathPart of messagePath) {
-      if (!structureItem) {
+    if (msgPathPart.type === "name") {
+      if (structureItem.structureType !== "message") {
         return { valid: false, msgPathPart, structureItem };
       }
-      if (msgPathPart.type === "name") {
-        if (structureItem.structureType !== "message") {
-          return { valid: false, msgPathPart, structureItem };
-        }
-        const next: MessagePathStructureItem | undefined =
-          structureItem.nextByName[msgPathPart.name];
-        structureItem = next;
-      } else if (msgPathPart.type === "slice") {
-        if (structureItem.structureType !== "array") {
-          return { valid: false, msgPathPart, structureItem };
-        }
-        structureItem = structureItem.next;
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      } else if (msgPathPart.type === "filter") {
-        if (
-          structureItem.structureType !== "message" ||
-          msgPathPart.path.length === 0 ||
-          msgPathPart.value == undefined
-        ) {
-          return { valid: false, msgPathPart, structureItem };
-        }
-        let currentItem: MessagePathStructureItem | undefined = structureItem;
-        for (const name of msgPathPart.path) {
-          if (currentItem.structureType !== "message") {
-            return { valid: false, msgPathPart, structureItem };
-          }
-          currentItem = currentItem.nextByName[name];
-          if (currentItem == undefined) {
-            return { valid: false, msgPathPart, structureItem };
-          }
-        }
-      } else {
-        assertNever(
-          msgPathPart,
-          `Invalid msgPathPart.type: ${(msgPathPart as MessagePathPart).type}`,
-        );
+      const next: MessagePathStructureItem | undefined = structureItem.nextByName[msgPathPart.name];
+      structureItem = next;
+    } else if (msgPathPart.type === "slice") {
+      if (structureItem.structureType !== "array") {
+        return { valid: false, msgPathPart, structureItem };
       }
+      structureItem = structureItem.next;
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    } else if (msgPathPart.type === "filter") {
+      if (
+        structureItem.structureType !== "message" ||
+        msgPathPart.path.length === 0 ||
+        msgPathPart.value == undefined
+      ) {
+        return { valid: false, msgPathPart, structureItem };
+      }
+      let currentItem: MessagePathStructureItem | undefined = structureItem;
+      for (const name of msgPathPart.path) {
+        if (currentItem.structureType !== "message") {
+          return { valid: false, msgPathPart, structureItem };
+        }
+        currentItem = currentItem.nextByName[name];
+        if (currentItem == undefined) {
+          return { valid: false, msgPathPart, structureItem };
+        }
+      }
+    } else {
+      assertNever(
+        msgPathPart,
+        `Invalid msgPathPart.type: ${(msgPathPart as MessagePathPart).type}`,
+      );
     }
-    return { valid: true, msgPathPart: undefined, structureItem };
-  },
-);
+  }
+  return { valid: true, msgPathPart: undefined, structureItem };
+};

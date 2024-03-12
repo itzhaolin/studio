@@ -12,6 +12,7 @@
 //   You may not use this file except in compliance with the License.
 
 import { StoryObj } from "@storybook/react";
+import { produce } from "immer";
 import { useCallback } from "react";
 
 import Stack from "@foxglove/studio-base/components/Stack";
@@ -84,8 +85,8 @@ const fixture: Fixture = {
     { name: "/blocks", schemaName: "msgs/SystemState" },
   ],
   activeData: {
-    startTime: { sec: 1526191527, nsec: 202050 },
-    endTime: { sec: 1526191551, nsec: 999997069 },
+    startTime: { sec: 1526191539, nsec: 202050 },
+    endTime: { sec: 1526191542, nsec: 999997069 },
     isPlaying: false,
     speed: 0.2,
   },
@@ -115,8 +116,26 @@ export default {
   title: "panels/StateTransitions",
   component: StateTransitions,
   parameters: {
+    colorScheme: "light",
     chromatic: { delay: 100 },
   },
+};
+
+export const Empty: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 1 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame}>
+        <StateTransitions />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };
 
 export const ColorPalette: StoryObj = {
@@ -129,9 +148,61 @@ export const ColorPalette: StoryObj = {
   ),
 };
 
+export const CloseValues: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 1 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    const closeMessages = [
+      { header: { stamp: { sec: 0, nsec: 0 } }, state: 0 },
+      { header: { stamp: { sec: 0, nsec: 0 } }, state: 1 },
+      { header: { stamp: { sec: 0, nsec: 0 } }, state: 2 },
+      { header: { stamp: { sec: 0, nsec: 0 } }, state: 3 },
+      { header: { stamp: { sec: 0, nsec: 0 } }, state: 4 },
+      { header: { stamp: { sec: 100, nsec: 0 } }, state: 4 },
+    ];
+
+    const closeFixture = produce(fixture, (draft) => {
+      draft.activeData = {
+        startTime: { sec: 0, nsec: 0 },
+        endTime: { sec: 100, nsec: 0 },
+        isPlaying: false,
+        speed: 0.2,
+      };
+      draft.frame = {
+        "/some/topic/with/state": closeMessages.map((message) => ({
+          topic: "/some/topic/with/state",
+          receiveTime: message.header.stamp,
+          message,
+          schemaName: "msgs/SystemState",
+          sizeInBytes: 0,
+        })),
+      };
+    });
+
+    return (
+      <PanelSetup fixture={closeFixture} pauseFrame={pauseFrame}>
+        <StateTransitions
+          overrideConfig={{
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: {
+    colorScheme: "light",
+    useReadySignal: true,
+  },
+};
+
 export const OnePath: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -148,12 +219,63 @@ export const OnePath: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
+};
+
+export const WithXAxisMinMax: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 1 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    return (
+      <PanelSetup fixture={fixture} pauseFrame={pauseFrame} includeSettings>
+        <StateTransitions
+          overrideConfig={{
+            xAxisMinValue: 1,
+            xAxisMaxValue: 3,
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { colorScheme: "light", useReadySignal: true },
+};
+
+export const WithXAxisRange: StoryObj = {
+  render: function Story() {
+    const readySignal = useReadySignal({ count: 1 });
+    const pauseFrame = useCallback(() => readySignal, [readySignal]);
+
+    const ourFixture = produce(fixture, (draft) => {
+      draft.activeData!.currentTime = systemStateMessages.at(-1)?.header.stamp;
+    });
+
+    return (
+      <PanelSetup fixture={ourFixture} pauseFrame={pauseFrame} includeSettings>
+        <StateTransitions
+          overrideConfig={{
+            xAxisRange: 3,
+            paths: [{ value: "/some/topic/with/state.state", timestampMethod: "receiveTime" }],
+            isSynced: true,
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+  play: async ({ parameters }) => {
+    await parameters.storyReady;
+  },
+  parameters: { colorScheme: "light", useReadySignal: true },
 };
 
 export const WithSettings: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -170,12 +292,12 @@ export const WithSettings: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };
 
 export const MultiplePaths: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -195,12 +317,12 @@ export const MultiplePaths: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };
 
 export const LongPath: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -217,12 +339,12 @@ export const LongPath: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };
 
 export const ColorClash: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -241,7 +363,7 @@ export const ColorClash: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };
 
 const messageCache: BlockCache = {
@@ -294,7 +416,7 @@ const messageCache: BlockCache = {
 
 export const Blocks: StoryObj = {
   render: function Story() {
-    const readySignal = useReadySignal({ count: 3 });
+    const readySignal = useReadySignal({ count: 1 });
     const pauseFrame = useCallback(() => readySignal, [readySignal]);
 
     return (
@@ -315,5 +437,5 @@ export const Blocks: StoryObj = {
   play: async ({ parameters }) => {
     await parameters.storyReady;
   },
-  parameters: { useReadySignal: true },
+  parameters: { useReadySignal: true, colorScheme: "light" },
 };

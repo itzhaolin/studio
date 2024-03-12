@@ -10,191 +10,155 @@ import {
   PanelRight24Regular,
   SlideAdd24Regular,
 } from "@fluentui/react-icons";
-import { Avatar, Button, IconButton, Tooltip, AppBar as MuiAppBar } from "@mui/material";
-import { useCallback, useState } from "react";
+import { Avatar, IconButton, Tooltip } from "@mui/material";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import tc from "tinycolor2";
 import { makeStyles } from "tss-react/mui";
-import { shallow } from "zustand/shallow";
 
-import { AppSetting } from "@foxglove/studio-base/AppSetting";
-import { AppBarIconButton } from "@foxglove/studio-base/components/AppBar/AppBarIconButton";
-import { AppMenu } from "@foxglove/studio-base/components/AppBar/AppMenu";
-import {
-  CustomWindowControls,
-  CustomWindowControlsProps,
-} from "@foxglove/studio-base/components/AppBar/CustomWindowControls";
 import { FoxgloveLogo } from "@foxglove/studio-base/components/FoxgloveLogo";
-import { MemoryUseIndicator } from "@foxglove/studio-base/components/MemoryUseIndicator";
 import Stack from "@foxglove/studio-base/components/Stack";
-import { useAnalytics } from "@foxglove/studio-base/context/AnalyticsContext";
 import { useAppContext } from "@foxglove/studio-base/context/AppContext";
 import {
   LayoutState,
   useCurrentLayoutSelector,
 } from "@foxglove/studio-base/context/CurrentLayoutContext";
-import { useCurrentUser } from "@foxglove/studio-base/context/CurrentUserContext";
 import {
-  useWorkspaceStore,
   WorkspaceContextStore,
+  useWorkspaceStore,
 } from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
 import { useWorkspaceActions } from "@foxglove/studio-base/context/Workspace/useWorkspaceActions";
-import { useAppConfigurationValue } from "@foxglove/studio-base/hooks";
-import { AppEvent } from "@foxglove/studio-base/services/IAnalytics";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
 
 import { AddPanelMenu } from "./AddPanelMenu";
+import { AppBarContainer } from "./AppBarContainer";
+import { AppBarIconButton } from "./AppBarIconButton";
+import { AppMenu } from "./AppMenu";
+import { CustomWindowControls, CustomWindowControlsProps } from "./CustomWindowControls";
 import { DataSource } from "./DataSource";
-import { UserMenu } from "./UserMenu";
-import { APP_BAR_HEIGHT } from "./constants";
+import { SettingsMenu } from "./SettingsMenu";
 
-const useStyles = makeStyles<{ leftInset?: number; debugDragRegion?: boolean }, "avatar">()(
-  (theme, { leftInset, debugDragRegion = false }, classes) => {
-    const DRAGGABLE_STYLE: Record<string, string> = { WebkitAppRegion: "drag" };
-    const NOT_DRAGGABLE_STYLE: Record<string, string> = { WebkitAppRegion: "no-drag" };
-    if (debugDragRegion) {
-      DRAGGABLE_STYLE.backgroundColor = "green";
-      NOT_DRAGGABLE_STYLE.backgroundColor = "red";
-    }
-    return {
-      appBar: {
-        gridArea: "appbar",
-        boxShadow: "none",
-        backgroundColor: theme.palette.appBar.main,
-        borderBottom: "none",
+const useStyles = makeStyles<{ debugDragRegion?: boolean }, "avatar">()((
+  theme,
+  { debugDragRegion = false },
+  classes,
+) => {
+  const NOT_DRAGGABLE_STYLE: Record<string, string> = { WebkitAppRegion: "no-drag" };
+  if (debugDragRegion) {
+    NOT_DRAGGABLE_STYLE.backgroundColor = "red";
+  }
+  return {
+    toolbar: {
+      display: "grid",
+      width: "100%",
+      gridTemplateAreas: `"start middle end"`,
+      gridTemplateColumns: "1fr auto 1fr",
+      alignItems: "center",
+    },
+    logo: {
+      padding: theme.spacing(0.75, 0.5),
+      fontSize: "2rem",
+      color: theme.palette.appBar.primary,
+      borderRadius: 0,
+
+      "svg:not(.MuiSvgIcon-root)": {
+        fontSize: "1em",
+      },
+      "&:hover": {
+        backgroundColor: tc(theme.palette.common.white).setAlpha(0.08).toRgbString(),
+      },
+      "&.Mui-selected": {
+        backgroundColor: theme.palette.appBar.primary,
         color: theme.palette.common.white,
-        height: APP_BAR_HEIGHT,
+      },
+      "&.Mui-disabled": {
+        color: "currentColor",
+        opacity: theme.palette.action.disabledOpacity,
+      },
+    },
+    dropDownIcon: {
+      fontSize: "12px !important",
+    },
+    start: {
+      gridArea: "start",
+      display: "flex",
+      flex: 1,
+      alignItems: "center",
+    },
+    startInner: {
+      display: "flex",
+      alignItems: "center",
+      ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
+    },
+    middle: {
+      gridArea: "middle",
+      justifySelf: "center",
+      overflow: "hidden",
+      maxWidth: "100%",
+      ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
+    },
+    end: {
+      gridArea: "end",
+      flex: 1,
+      display: "flex",
+      justifyContent: "flex-end",
+    },
+    endInner: {
+      display: "flex",
+      alignItems: "center",
+      ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
+    },
+    keyEquivalent: {
+      fontFamily: theme.typography.fontMonospace,
+      background: tc(theme.palette.common.white).darken(45).toString(),
+      padding: theme.spacing(0, 0.5),
+      aspectRatio: 1,
+      borderRadius: theme.shape.borderRadius,
+      marginLeft: theme.spacing(1),
+    },
+    tooltip: {
+      marginTop: `${theme.spacing(0.5)} !important`,
+    },
+    avatar: {
+      color: theme.palette.common.white,
+      backgroundColor: tc(theme.palette.appBar.main).lighten().toString(),
+      height: theme.spacing(3.5),
+      width: theme.spacing(3.5),
+    },
+    iconButton: {
+      padding: theme.spacing(1),
+      borderRadius: 0,
 
-        // Leave space for system window controls on the right on Windows.
-        // Use hard-coded padding for Mac because it looks better than env(titlebar-area-x).
-        paddingLeft: leftInset,
-        paddingRight: "calc(100% - env(titlebar-area-x) - env(titlebar-area-width))",
-        ...DRAGGABLE_STYLE, // make custom window title bar draggable for desktop app
-      },
-      toolbar: {
-        display: "grid",
-        width: "100%",
-        gridTemplateAreas: `"start middle end"`,
-        gridTemplateColumns: "1fr auto 1fr",
-        alignItems: "center",
-      },
-      logo: {
-        padding: theme.spacing(0.75, 0.5),
-        fontSize: "2rem",
-        color: theme.palette.appBar.primary,
-        borderRadius: 0,
+      "&:hover": {
+        backgroundColor: tc(theme.palette.common.white).setAlpha(0.08).toString(),
 
-        "svg:not(.MuiSvgIcon-root)": {
-          fontSize: "1em",
-        },
-        "&:hover": {
-          backgroundColor: tc(theme.palette.common.white).setAlpha(0.08).toRgbString(),
-        },
-        "&.Mui-selected": {
-          backgroundColor: theme.palette.appBar.primary,
-          color: theme.palette.common.white,
-        },
-        "&.Mui-disabled": {
-          color: "currentColor",
-          opacity: theme.palette.action.disabledOpacity,
+        [`.${classes.avatar}`]: {
+          backgroundColor: tc(theme.palette.appBar.main).lighten(20).toString(),
         },
       },
-      dropDownIcon: {
-        fontSize: "12px !important",
-      },
-      start: {
-        gridArea: "start",
-        display: "flex",
-        flex: 1,
-        alignItems: "center",
-      },
-      startInner: {
-        display: "flex",
-        alignItems: "center",
-        ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
-      },
-      middle: {
-        gridArea: "middle",
-        justifySelf: "center",
-        overflow: "hidden",
-        maxWidth: "100%",
-        ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
-      },
-      end: {
-        gridArea: "end",
-        flex: 1,
-        display: "flex",
-        justifyContent: "flex-end",
-      },
-      endInner: {
-        display: "flex",
-        alignItems: "center",
-        ...NOT_DRAGGABLE_STYLE, // make buttons clickable for desktop app
-      },
-      keyEquivalent: {
-        fontFamily: fonts.MONOSPACE,
-        background: tc(theme.palette.common.white).darken(45).toString(),
-        padding: theme.spacing(0, 0.5),
-        aspectRatio: 1,
-        borderRadius: theme.shape.borderRadius,
-        marginLeft: theme.spacing(1),
-      },
-      tooltip: {
-        marginTop: `${theme.spacing(0.5)} !important`,
-      },
-      avatar: {
-        color: theme.palette.common.white,
-        backgroundColor: tc(theme.palette.appBar.main).lighten().toString(),
-        height: theme.spacing(3.5),
-        width: theme.spacing(3.5),
-      },
-      iconButton: {
-        padding: theme.spacing(1),
-        borderRadius: 0,
-
-        "&:hover": {
-          backgroundColor: tc(theme.palette.common.white).setAlpha(0.08).toString(),
-
-          [`.${classes.avatar}`]: {
-            backgroundColor: tc(theme.palette.appBar.main).lighten(20).toString(),
-          },
-        },
-        "&.Mui-selected": {
-          backgroundColor: theme.palette.appBar.primary,
-
-          [`.${classes.avatar}`]: {
-            backgroundColor: tc(theme.palette.appBar.main).setAlpha(0.3).toString(),
-          },
-        },
-      },
-      button: {
-        marginInline: theme.spacing(1),
+      "&.Mui-selected": {
         backgroundColor: theme.palette.appBar.primary,
 
-        "&:hover": {
-          backgroundColor: theme.palette.augmentColor({
-            color: { main: theme.palette.appBar.primary as string },
-          }).dark,
+        [`.${classes.avatar}`]: {
+          backgroundColor: tc(theme.palette.appBar.main).setAlpha(0.3).toString(),
         },
       },
-    };
-  },
-);
+    },
+  };
+});
 
-type AppBarProps = CustomWindowControlsProps & {
+export type AppBarProps = CustomWindowControlsProps & {
   leftInset?: number;
   onDoubleClick?: () => void;
   debugDragRegion?: boolean;
-  disableSignIn?: boolean;
 };
 
-const selectCurrentLayoutId = ({ selectedLayout }: LayoutState) => selectedLayout?.id;
-const selectWorkspace = (store: WorkspaceContextStore) => store;
+const selectHasCurrentLayout = (state: LayoutState) => state.selectedLayout != undefined;
+const selectLeftSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.left.open;
+const selectRightSidebarOpen = (store: WorkspaceContextStore) => store.sidebars.right.open;
 
 export function AppBar(props: AppBarProps): JSX.Element {
   const {
     debugDragRegion,
-    disableSignIn = false,
     isMaximized,
     leftInset,
     onCloseWindow,
@@ -204,25 +168,16 @@ export function AppBar(props: AppBarProps): JSX.Element {
     onUnmaximizeWindow,
     showCustomWindowControls = false,
   } = props;
-  const { classes, cx, theme } = useStyles({ leftInset, debugDragRegion });
-  const { currentUser, signIn } = useCurrentUser();
+  const { classes, cx, theme } = useStyles({ debugDragRegion });
   const { t } = useTranslation("appBar");
 
   const { appBarLayoutButton } = useAppContext();
 
-  const analytics = useAnalytics();
-  const [enableMemoryUseIndicator = false] = useAppConfigurationValue<boolean>(
-    AppSetting.ENABLE_MEMORY_USE_INDICATOR,
-  );
+  const hasCurrentLayout = useCurrentLayoutSelector(selectHasCurrentLayout);
 
-  const currentLayoutId = useCurrentLayoutSelector(selectCurrentLayoutId);
+  const leftSidebarOpen = useWorkspaceStore(selectLeftSidebarOpen);
+  const rightSidebarOpen = useWorkspaceStore(selectRightSidebarOpen);
 
-  const {
-    sidebars: {
-      left: { open: leftSidebarOpen },
-      right: { open: rightSidebarOpen },
-    },
-  } = useWorkspaceStore(selectWorkspace, shallow);
   const { sidebarActions } = useWorkspaceActions();
 
   const [appMenuEl, setAppMenuEl] = useState<undefined | HTMLElement>(undefined);
@@ -233,25 +188,9 @@ export function AppBar(props: AppBarProps): JSX.Element {
   const userMenuOpen = Boolean(userAnchorEl);
   const panelMenuOpen = Boolean(panelAnchorEl);
 
-  const handleDoubleClick = useCallback(
-    (event: React.MouseEvent) => {
-      event.stopPropagation();
-      event.preventDefault();
-      onDoubleClick?.();
-    },
-    [onDoubleClick],
-  );
-
   return (
     <>
-      <MuiAppBar
-        className={classes.appBar}
-        position="relative"
-        color="inherit"
-        elevation={0}
-        onDoubleClick={handleDoubleClick}
-        data-tourid="app-bar"
-      >
+      <AppBarContainer onDoubleClick={onDoubleClick} leftInset={leftInset}>
         <div className={classes.toolbar}>
           <div className={classes.start}>
             <div className={classes.startInner}>
@@ -277,15 +216,17 @@ export function AppBar(props: AppBarProps): JSX.Element {
               <AppMenu
                 open={appMenuOpen}
                 anchorEl={appMenuEl}
-                handleClose={() => setAppMenuEl(undefined)}
+                handleClose={() => {
+                  setAppMenuEl(undefined);
+                }}
               />
               <AppBarIconButton
                 className={cx({ "Mui-selected": panelMenuOpen })}
                 color="inherit"
-                disabled={currentLayoutId == undefined}
+                disabled={!hasCurrentLayout}
                 id="add-panel-button"
                 data-tourid="add-panel-button"
-                title="Add panel"
+                title={t("addPanel")}
                 aria-label="Add panel button"
                 aria-controls={panelMenuOpen ? "add-panel-menu" : undefined}
                 aria-haspopup="true"
@@ -305,18 +246,19 @@ export function AppBar(props: AppBarProps): JSX.Element {
 
           <div className={classes.end}>
             <div className={classes.endInner}>
-              {enableMemoryUseIndicator && <MemoryUseIndicator />}
               {appBarLayoutButton}
               <Stack direction="row" alignItems="center" data-tourid="sidebar-button-group">
                 <AppBarIconButton
                   title={
                     <>
-                      {leftSidebarOpen ? "Hide" : "Show"} left sidebar{" "}
+                      {leftSidebarOpen ? t("hideLeftSidebar") : t("showLeftSidebar")}{" "}
                       <kbd className={classes.keyEquivalent}>[</kbd>
                     </>
                   }
-                  aria-label={`${leftSidebarOpen ? "Hide" : "Show"} left sidebar`}
-                  onClick={() => sidebarActions.left.setOpen(!leftSidebarOpen)}
+                  aria-label={`${leftSidebarOpen ? t("hideLeftSidebar") : t("showLeftSidebar")}`}
+                  onClick={() => {
+                    sidebarActions.left.setOpen(!leftSidebarOpen);
+                  }}
                   data-tourid="left-sidebar-button"
                 >
                   {leftSidebarOpen ? <PanelLeft24Filled /> : <PanelLeft24Regular />}
@@ -324,39 +266,20 @@ export function AppBar(props: AppBarProps): JSX.Element {
                 <AppBarIconButton
                   title={
                     <>
-                      {rightSidebarOpen ? "Hide" : "Show"} right sidebar{" "}
+                      {rightSidebarOpen ? t("hideRightSidebar") : t("showRightSidebar")}{" "}
                       <kbd className={classes.keyEquivalent}>]</kbd>
                     </>
                   }
-                  aria-label={`${rightSidebarOpen ? "Hide" : "Show"} right sidebar`}
-                  onClick={() => sidebarActions.right.setOpen(!rightSidebarOpen)}
+                  aria-label={`${rightSidebarOpen ? t("hideRightSidebar") : t("showRightSidebar")}`}
+                  onClick={() => {
+                    sidebarActions.right.setOpen(!rightSidebarOpen);
+                  }}
                   data-tourid="right-sidebar-button"
                 >
                   {rightSidebarOpen ? <PanelRight24Filled /> : <PanelRight24Regular />}
                 </AppBarIconButton>
               </Stack>
-              {!disableSignIn && !currentUser && signIn != undefined && (
-                <Button
-                  variant="contained"
-                  color="primary"
-                  className={classes.button}
-                  size="small"
-                  onClick={() => {
-                    signIn();
-                    void analytics.logEvent(AppEvent.APP_BAR_CLICK_CTA, {
-                      user: "unauthenticated",
-                      cta: "sign-in",
-                    });
-                  }}
-                >
-                  {t("signIn")}
-                </Button>
-              )}
-              <Tooltip
-                classes={{ tooltip: classes.tooltip }}
-                title={currentUser?.email ?? "Profile"}
-                arrow={false}
-              >
+              <Tooltip classes={{ tooltip: classes.tooltip }} title={t("profile")} arrow={false}>
                 <IconButton
                   className={cx(classes.iconButton, { "Mui-selected": userMenuOpen })}
                   aria-label="User profile menu button"
@@ -366,14 +289,12 @@ export function AppBar(props: AppBarProps): JSX.Element {
                   aria-controls={userMenuOpen ? "user-menu" : undefined}
                   aria-haspopup="true"
                   aria-expanded={userMenuOpen ? "true" : undefined}
-                  onClick={(event) => setUserAnchorEl(event.currentTarget)}
+                  onClick={(event) => {
+                    setUserAnchorEl(event.currentTarget);
+                  }}
                   data-testid="user-button"
                 >
-                  <Avatar
-                    src={currentUser?.avatarImageUrl ?? undefined}
-                    className={classes.avatar}
-                    variant="rounded"
-                  />
+                  <Avatar className={classes.avatar} variant="rounded" />
                 </IconButton>
               </Tooltip>
               {showCustomWindowControls && (
@@ -388,16 +309,20 @@ export function AppBar(props: AppBarProps): JSX.Element {
             </div>
           </div>
         </div>
-      </MuiAppBar>
+      </AppBarContainer>
       <AddPanelMenu
         anchorEl={panelAnchorEl}
         open={panelMenuOpen}
-        handleClose={() => setPanelAnchorEl(undefined)}
+        handleClose={() => {
+          setPanelAnchorEl(undefined);
+        }}
       />
-      <UserMenu
+      <SettingsMenu
         anchorEl={userAnchorEl}
         open={userMenuOpen}
-        handleClose={() => setUserAnchorEl(undefined)}
+        handleClose={() => {
+          setUserAnchorEl(undefined);
+        }}
       />
     </>
   );

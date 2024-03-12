@@ -13,6 +13,10 @@ export type StateTransitionPath = {
 };
 
 export type StateTransitionConfig = {
-  paths: StateTransitionPath[];
   isSynced: boolean;
+  paths: StateTransitionPath[];
+  xAxisMaxValue?: number;
+  xAxisMinValue?: number;
+  xAxisRange?: number;
+  showPoints?: boolean;
 };

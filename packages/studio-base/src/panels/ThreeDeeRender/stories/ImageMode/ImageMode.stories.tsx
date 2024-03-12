@@ -2,14 +2,17 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { StoryObj } from "@storybook/react";
-import { screen, userEvent, waitFor } from "@storybook/testing-library";
+import { Meta, StoryObj } from "@storybook/react";
+import { fireEvent, screen, userEvent, waitFor } from "@storybook/testing-library";
 import { useCallback, useMemo, useState } from "react";
 import { useAsync } from "react-use";
+import tinycolor from "tinycolor2";
 
 import {
+  CameraCalibration,
   CompressedImage,
   ImageAnnotations,
+  PointsAnnotation,
   PointsAnnotationType,
   RawImage,
 } from "@foxglove/schemas";
@@ -23,15 +26,15 @@ import { Topic } from "@foxglove/studio-base/players/types";
 import PanelSetup, { Fixture } from "@foxglove/studio-base/stories/PanelSetup";
 import delay from "@foxglove/studio-base/util/delay";
 
-import { ImagePanel, ThreeDeePanel } from "../../index";
+import { ImagePanel } from "../../index";
 import { CameraInfo, CompressedImage as RosCompressedImage, Image as RosRawImage } from "../../ros";
 import { PNG_TEST_IMAGE, rad2deg, SENSOR_FRAME_ID } from "../common";
 
 export default {
   title: "panels/ThreeDeeRender/Images",
-  component: ThreeDeePanel,
+  component: ImagePanel,
   parameters: { colorScheme: "light" },
-};
+} as Meta;
 
 const ImageModeRosImage = ({ imageType }: { imageType: "raw" | "png" }): JSX.Element => {
   const topics: Topic[] = [
@@ -175,12 +178,12 @@ const ImageModeRosImage = ({ imageType }: { imageType: "raw" | "png" }): JSX.Ele
   );
 };
 
-export const ImageModeRosRawImage: StoryObj<React.ComponentProps<typeof ImageModeRosImage>> = {
+export const ImageModeRosRawImage: StoryObj<typeof ImageModeRosImage> = {
   render: ImageModeRosImage,
   args: { imageType: "raw" },
 };
 
-export const ImageModeRosPngImage: StoryObj<React.ComponentProps<typeof ImageModeRosImage>> = {
+export const ImageModeRosPngImage: StoryObj<typeof ImageModeRosImage> = {
   render: ImageModeRosImage,
   args: { imageType: "png" },
 };
@@ -299,8 +302,8 @@ const ImageModeFoxgloveImage = ({
 
   let mono16Raw: MessageEvent<Partial<RawImage>>;
   {
-    const width = 640;
-    const height = 480;
+    const width = 160;
+    const height = 120;
     const mono16Data = new DataView(new ArrayBuffer(width * height * 2));
     for (let r = 0; r < height; r++) {
       for (let c = 0; c < width; c++) {
@@ -401,21 +404,17 @@ const ImageModeFoxgloveImage = ({
   );
 };
 
-export const ImageModeFoxgloveRawImage: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const ImageModeFoxgloveRawImage: StoryObj<typeof ImageModeFoxgloveImage> = {
   render: ImageModeFoxgloveImage,
   args: { imageType: "raw" },
 };
 
-export const ImageModeFoxglovePngImage: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const ImageModeFoxglovePngImage: StoryObj<typeof ImageModeFoxgloveImage> = {
   render: ImageModeFoxgloveImage,
   args: { imageType: "png" },
 };
 
-export const DownloadRawImage: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadRawImage: StoryObj<typeof ImageModeFoxgloveImage> = {
   render: function Story(args) {
     const [src, setSrc] = useState<string | undefined>();
     const [filename, setFilename] = useState<string | undefined>();
@@ -438,98 +437,91 @@ export const DownloadRawImage: StoryObj<React.ComponentProps<typeof ImageModeFox
   args: { imageType: "raw" },
   play: async () => {
     const { click, pointer } = userEvent.setup();
+    // need to wait until the images are done decoding
+    await delay(500);
     await pointer({ target: document.querySelector("canvas")!, keys: "[MouseRight]" });
-    await click(await screen.findByText("Download image"));
+    const downloadButton = await screen.findByText("Download image");
+    await click(downloadButton);
+    // Add an extra delay after rendering the downloaded image to avoid flaky stores
+    await delay(800);
   },
 };
 
-export const DownloadPngImage: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadPngImage: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png" },
 };
 
-export const DownloadPngImageFlipH: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> =
-  {
-    ...DownloadRawImage,
-    args: { imageType: "png", flipHorizontal: true },
-  };
+export const DownloadPngImageFlipH: StoryObj<typeof ImageModeFoxgloveImage> = {
+  ...DownloadRawImage,
+  args: { imageType: "png", flipHorizontal: true },
+};
 
-export const DownloadPngImageFlipV: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> =
-  {
-    ...DownloadRawImage,
-    args: { imageType: "png", flipVertical: true },
-  };
+export const DownloadPngImageFlipV: StoryObj<typeof ImageModeFoxgloveImage> = {
+  ...DownloadRawImage,
+  args: { imageType: "png", flipVertical: true },
+};
 
-export const DownloadPngImageFlipHV: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> =
-  {
-    ...DownloadRawImage,
-    args: { imageType: "png", flipHorizontal: true, flipVertical: true },
-  };
+export const DownloadPngImageFlipHV: StoryObj<typeof ImageModeFoxgloveImage> = {
+  ...DownloadRawImage,
+  args: { imageType: "png", flipHorizontal: true, flipVertical: true },
+};
 
-export const DownloadPngImage90: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadPngImage90: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 90 },
 };
 
-export const DownloadPngImage180: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadPngImage180: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 180 },
 };
 
-export const DownloadPngImage270: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadPngImage270: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 270 },
 };
 
-export const DownloadPngImage90FlipH: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const DownloadPngImage90FlipH: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 90, flipHorizontal: true },
 };
 
-export const DownloadPngImage90FlipV: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const DownloadPngImage90FlipV: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 90, flipVertical: true },
 };
 
-export const DownloadPngImage90FlipHV: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const DownloadPngImage90FlipHV: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "png", rotation: 90, flipHorizontal: true, flipVertical: true },
 };
 
-export const DownloadMono16Image: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const DownloadMono16Image: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "raw_mono16" },
 };
-export const DownloadMono16ImageCustomMinMax: StoryObj<
-  React.ComponentProps<typeof ImageModeFoxgloveImage>
-> = {
+export const DownloadMono16ImageCustomMinMax: StoryObj<typeof ImageModeFoxgloveImage> = {
   ...DownloadRawImage,
   args: { imageType: "raw_mono16", minValue: 10000, maxValue: 20000 },
 };
 
-export const ImageModeResizeHandled: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> =
-  {
-    render: ImageModeFoxgloveImage,
-    args: { imageType: "raw" },
+export const ImageModeResizeHandled: StoryObj<typeof ImageModeFoxgloveImage> = {
+  render: ImageModeFoxgloveImage,
+  args: { imageType: "raw" },
 
-    play: async () => {
-      const canvas = document.querySelector("canvas")!;
-      // Input attaches resize listener to parent element, so we need to resize that.
-      const parentEl = canvas.parentElement!;
-      await delay(30);
-      parentEl.style.width = "50%";
-      canvas.dispatchEvent(new Event("resize"));
-      await delay(30);
-    },
-  };
+  play: async () => {
+    const canvas = document.querySelector("canvas")!;
+    // Input attaches resize listener to parent element, so we need to resize that.
+    const parentEl = canvas.parentElement!;
+    await delay(30);
+    parentEl.style.width = "50%";
+    canvas.dispatchEvent(new Event("resize"));
+    await delay(30);
+  },
+};
 
-export const ImageModePick: StoryObj<React.ComponentProps<typeof ImageModeFoxgloveImage>> = {
+export const ImageModePick: StoryObj<typeof ImageModeFoxgloveImage> = {
   render: ImageModeFoxgloveImage,
   args: { imageType: "raw" },
 
@@ -690,8 +682,8 @@ export const UnsupportedEncodingError: StoryObj = {
   play: async () => {
     const errorIcon = await waitFor(async () => {
       const icons = await screen.findAllByTestId("ErrorIcon");
-      if (icons.length !== 2) {
-        throw new Error("Expected 2 error icons");
+      if (icons.length !== 1) {
+        throw new Error("Expected 1 error icon. (unsupported encoding)");
       }
       return icons[0];
     });
@@ -733,8 +725,8 @@ export const DecompressionError: StoryObj = {
   play: async () => {
     const errorIcon = await waitFor(async () => {
       const icons = await screen.findAllByTestId("ErrorIcon");
-      if (icons.length !== 2) {
-        throw new Error("Expected 2 error icons");
+      if (icons.length !== 1) {
+        throw new Error("Expected 1 error icon (decompression error)");
       }
       return icons[0];
     });
@@ -784,4 +776,403 @@ export const LargeImage: StoryObj = {
       </PanelSetup>
     );
   },
+};
+
+function makeYUYV(width: number, height: number) {
+  const result = new Uint8Array(2 * width * height);
+  for (let r = 0; r < height; r++) {
+    for (let c = 0; c < width; c += 2) {
+      const y1 = r === c ? 255 : 127;
+      const y2 = r === c + 1 ? 255 : 127;
+      const u = Math.trunc(255 * (c / width));
+      const v = Math.trunc(255 * (r / height));
+      result[2 * (r * width + c) + 0] = y1;
+      result[2 * (r * width + c) + 1] = u;
+      result[2 * (r * width + c) + 2] = y2;
+      result[2 * (r * width + c) + 3] = v;
+    }
+  }
+  return result;
+}
+
+function makeUYVY(width: number, height: number) {
+  const result = makeYUYV(width, height);
+  for (let i = 0; i < result.length; i += 4) {
+    const [y1, u, y2, v] = result.subarray(i, i + 4);
+    result[i + 0] = u!;
+    result[i + 1] = y1!;
+    result[i + 2] = v!;
+    result[i + 3] = y2!;
+  }
+  return result;
+}
+
+export const YUYV: StoryObj = {
+  render: function Story() {
+    const imageTopic = "camera";
+    const topics: Topic[] = useMemo(
+      () => [{ name: imageTopic, schemaName: "foxglove.RawImage" }],
+      [],
+    );
+
+    const width = 200;
+    const height = 150;
+    const cameraMessage: MessageEvent<RawImage> = {
+      topic: imageTopic,
+      receiveTime: { sec: 10, nsec: 0 },
+      message: {
+        timestamp: { sec: 10, nsec: 0 },
+        frame_id: "camera",
+        width,
+        height,
+        encoding: "yuyv",
+        step: width * 2,
+        data: makeYUYV(width, height),
+      },
+      schemaName: "foxglove.RawImage",
+      sizeInBytes: 0,
+    };
+
+    const fixture: Fixture = {
+      topics,
+      frame: {
+        [imageTopic]: [cameraMessage],
+      },
+      capabilities: [],
+      activeData: {
+        currentTime: { sec: 0, nsec: 0 },
+      },
+    };
+
+    return (
+      <PanelSetup fixture={fixture}>
+        <ImagePanel
+          overrideConfig={{
+            ...ImagePanel.defaultConfig,
+            imageMode: { imageTopic },
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+};
+
+export const UYVY: StoryObj = {
+  render: function Story() {
+    const imageTopic = "camera";
+    const topics: Topic[] = useMemo(
+      () => [{ name: imageTopic, schemaName: "foxglove.RawImage" }],
+      [],
+    );
+
+    const width = 200;
+    const height = 150;
+    const cameraMessage: MessageEvent<RawImage> = {
+      topic: imageTopic,
+      receiveTime: { sec: 10, nsec: 0 },
+      message: {
+        timestamp: { sec: 10, nsec: 0 },
+        frame_id: "camera",
+        width,
+        height,
+        encoding: "uyvy",
+        step: width * 2,
+        data: makeUYVY(width, height),
+      },
+      schemaName: "foxglove.RawImage",
+      sizeInBytes: 0,
+    };
+
+    const fixture: Fixture = {
+      topics,
+      frame: {
+        [imageTopic]: [cameraMessage],
+      },
+      capabilities: [],
+      activeData: {
+        currentTime: { sec: 0, nsec: 0 },
+      },
+    };
+
+    return (
+      <PanelSetup fixture={fixture}>
+        <ImagePanel
+          overrideConfig={{
+            ...ImagePanel.defaultConfig,
+            imageMode: { imageTopic },
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+};
+
+export const RationalPolynomialDistortion: StoryObj = {
+  render: function Story() {
+    const imageTopic = "camera";
+    const calibrationTopic = "calibration";
+    const annotationsTopic = "annotations";
+    const topics: Topic[] = useMemo(
+      () => [
+        { name: imageTopic, schemaName: "foxglove.RawImage" },
+        { name: calibrationTopic, schemaName: "foxglove.CameraCalibration" },
+        { name: annotationsTopic, schemaName: "foxglove.ImageAnnotations" },
+      ],
+      [],
+    );
+
+    const width = 1928;
+    const height = 1208;
+
+    const fx = 1214.314459;
+    const fy = 1214.314459;
+    const cx = 964.3224501;
+    const cy = 540.9620611;
+    const k1 = 0.023768356069922447;
+    const k2 = -0.31508326530456543;
+    const p1 = -0.000028460506655392237;
+    const p2 = -0.000457515794551;
+    const k3 = -0.01789267733693123;
+    const k4 = 0.4375666677951813;
+    const k5 = -0.39708587527275085;
+    const k6 = -0.10816607624292374;
+    const calibrationMessage: MessageEvent<CameraCalibration> = {
+      topic: calibrationTopic,
+      schemaName: "foxglove.CameraCalibration",
+      sizeInBytes: 0,
+      receiveTime: { sec: 0, nsec: 0 },
+      message: {
+        timestamp: { sec: 0, nsec: 0 },
+        width: 1928,
+        height: 1208,
+        frame_id: "cam",
+        distortion_model: "rational_polynomial",
+        K: [fx, 0, cx, 0, fy, cy, 0, 0, 1],
+        P: [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0],
+        D: [k1, k2, p1, p2, k3, k4, k5, k6],
+        R: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      },
+    };
+
+    const getGridLineColor = (idx: number) => {
+      if (idx % 200 === 199 || idx % 200 === 0 || idx % 200 === 1) {
+        return 0;
+      }
+      if (idx % 50 === 0) {
+        return 100;
+      }
+      return 127;
+    };
+    const imageData = new Uint8Array(width * height * 3);
+    let i = 0;
+    for (let r = 0; r < height; r++) {
+      for (let c = 0; c < width; c++) {
+        if (r === 0 || r === height - 1 || c === 0 || c === width - 1) {
+          imageData[i] = 150;
+          imageData[i + 1] = 150;
+          imageData[i + 2] = 255;
+          i += 3;
+        } else {
+          const color = getGridLineColor(r) + getGridLineColor(c);
+          imageData[i] = color;
+          imageData[i + 1] = color;
+          imageData[i + 2] = color;
+          i += 3;
+        }
+      }
+    }
+
+    const imageMessage: MessageEvent<RawImage> = {
+      topic: imageTopic,
+      schemaName: "foxglove.RawImage",
+      sizeInBytes: 0,
+      receiveTime: { sec: 0, nsec: 0 },
+      message: {
+        frame_id: "cam",
+        timestamp: { sec: 0, nsec: 0 },
+        width,
+        height,
+        step: width * 3,
+        encoding: "rgb8",
+        data: imageData,
+      },
+    };
+
+    const lines: PointsAnnotation = {
+      timestamp: { sec: 0, nsec: 0 },
+      type: PointsAnnotationType.LINE_STRIP,
+      points: [],
+      thickness: 2,
+      outline_color: { r: 0, g: 0.8, b: 0, a: 1 },
+      outline_colors: [],
+      fill_color: { r: 0, g: 0, b: 0, a: 0 },
+    };
+    const points: PointsAnnotation = {
+      timestamp: { sec: 0, nsec: 0 },
+      type: PointsAnnotationType.POINTS,
+      points: [],
+      thickness: 20,
+      outline_color: { r: 0, g: 0, b: 0, a: 0 },
+      outline_colors: [],
+      fill_color: { r: 0, g: 0, b: 0, a: 0 },
+    };
+    const inset = 100;
+    const rows = 5;
+    const cols = 8;
+    for (let row = 0; row <= rows; row++) {
+      for (let col = 0; col <= cols; col++) {
+        const x = inset + Math.round((width - 2 * inset) * (col / cols));
+        const y = inset + Math.round((height - 2 * inset) * (row / rows));
+        points.points.push({ x, y });
+        lines.points.push({ x, y });
+        const { r, g, b } = tinycolor({
+          h: ((row / rows + col / cols) / 2) * 360,
+          s: 100,
+          v: 100,
+        }).toRgb();
+        points.outline_colors.push({ r: r / 255, g: g / 255, b: b / 255, a: 1 });
+      }
+    }
+    const annotationsMessage: MessageEvent<ImageAnnotations> = {
+      topic: "annotations",
+      schemaName: "foxglove.ImageAnnotations",
+      receiveTime: { sec: 0, nsec: 0 },
+      sizeInBytes: 0,
+      message: {
+        points: [lines, points],
+        circles: [],
+        texts: [],
+      },
+    };
+
+    const fixture: Fixture = {
+      topics,
+      frame: {
+        [imageTopic]: [imageMessage],
+        [calibrationTopic]: [calibrationMessage],
+        [annotationsTopic]: [annotationsMessage],
+      },
+      capabilities: [],
+      activeData: {
+        currentTime: { sec: 0, nsec: 0 },
+      },
+    };
+
+    return (
+      <PanelSetup fixture={fixture}>
+        <ImagePanel
+          overrideConfig={{
+            ...ImagePanel.defaultConfig,
+            imageMode: {
+              imageTopic,
+              calibrationTopic,
+              annotations: { [annotationsTopic]: { visible: true } },
+            },
+          }}
+        />
+      </PanelSetup>
+    );
+  },
+
+  async play() {
+    const canvas = document.querySelector("canvas")!;
+    const rect = canvas.getBoundingClientRect();
+
+    fireEvent.wheel(canvas, {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      deltaY: 100,
+    });
+  },
+};
+
+const ImageModeEmptyLayout = ({
+  type,
+}: {
+  type: "no-topics" | "no-image-topics" | "no-messages" | "image-topic-DNE";
+}): JSX.Element => {
+  let fixture: Fixture | undefined;
+  let calibrationTopic: string | undefined = "calibration";
+  switch (type) {
+    case "no-topics":
+      fixture = {
+        topics: [],
+        frame: {},
+        capabilities: [],
+        activeData: {
+          currentTime: { sec: 0, nsec: 0 },
+        },
+      };
+      break;
+    case "no-image-topics":
+      calibrationTopic = undefined;
+      fixture = {
+        topics: [],
+        frame: {},
+        capabilities: [],
+        activeData: {
+          currentTime: { sec: 0, nsec: 0 },
+        },
+      };
+      break;
+    case "image-topic-DNE": {
+      calibrationTopic = undefined;
+      fixture = {
+        topics: [],
+        frame: {},
+        capabilities: [],
+        activeData: {
+          currentTime: { sec: 0, nsec: 0 },
+        },
+      };
+      break;
+    }
+    case "no-messages":
+      fixture = {
+        topics: [
+          { name: "calibration", schemaName: "foxglove.CameraCalibration" },
+          { name: "camera", schemaName: "foxglove.RawImage" },
+        ],
+        frame: {},
+        capabilities: [],
+        activeData: {
+          currentTime: { sec: 0, nsec: 0 },
+        },
+      };
+      break;
+  }
+  return (
+    <PanelSetup fixture={fixture} includeSettings={true}>
+      <ImagePanel
+        overrideConfig={{
+          ...ImagePanel.defaultConfig,
+          imageMode: {
+            calibrationTopic,
+            imageTopic: "camera",
+          },
+        }}
+      />
+    </PanelSetup>
+  );
+};
+
+export const ImageModeEmptyNoTopics: StoryObj<typeof ImageModeEmptyLayout> = {
+  render: ImageModeEmptyLayout,
+  args: { type: "no-topics" },
+};
+
+export const ImageModeEmptyNoImageTopics: StoryObj<typeof ImageModeEmptyLayout> = {
+  render: ImageModeEmptyLayout,
+  args: { type: "no-topics" },
+};
+
+export const ImageModeEmptyNoMessages: StoryObj<typeof ImageModeEmptyLayout> = {
+  render: ImageModeEmptyLayout,
+  args: { type: "no-messages" },
+};
+
+// when calibration == "None", then we display an empty state when only the image topic does not exist
+export const ImageModeEmptyOnlyImageTopicDNE: StoryObj<typeof ImageModeEmptyLayout> = {
+  render: ImageModeEmptyLayout,
+  args: { type: "image-topic-DNE" },
 };

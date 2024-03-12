@@ -3,12 +3,14 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
 import EventEmitter from "eventemitter3";
+import { quat, vec3 } from "gl-matrix";
 import i18next from "i18next";
 import { produce } from "immer";
 import * as THREE from "three";
 import { DeepPartial, assert } from "ts-essentials";
 import { v4 as uuidv4 } from "uuid";
 
+import { ObjectPool } from "@foxglove/den/collection";
 import Logger from "@foxglove/log";
 import { Time, fromNanoSec, isLessThan, toNanoSec } from "@foxglove/rostime";
 import type { FrameTransform, FrameTransforms, SceneUpdate } from "@foxglove/schemas";
@@ -23,25 +25,35 @@ import {
   Topic,
   VariableValue,
 } from "@foxglove/studio";
+import { PanelContextMenuItem } from "@foxglove/studio-base/components/PanelContextMenu";
+import {
+  Asset,
+  BuiltinPanelExtensionContext,
+  DraggedMessagePath,
+  MessagePathDropStatus,
+} from "@foxglove/studio-base/components/PanelExtensionAdapter";
+import { HUDItemManager } from "@foxglove/studio-base/panels/ThreeDeeRender/HUDItemManager";
 import { LayerErrors } from "@foxglove/studio-base/panels/ThreeDeeRender/LayerErrors";
-import { FoxgloveGrid } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/FoxgloveGrid";
 import { ICameraHandler } from "@foxglove/studio-base/panels/ThreeDeeRender/renderables/ICameraHandler";
-import { dark, light } from "@foxglove/studio-base/theme/palette";
-import { fonts } from "@foxglove/studio-base/util/sharedStyleConstants";
+import IAnalytics from "@foxglove/studio-base/services/IAnalytics";
+import { palette, fontMonospace } from "@foxglove/theme";
 import { LabelMaterial, LabelPool } from "@foxglove/three-text";
 
+import { HUDItem } from "./HUDItemManager";
 import {
   IRenderer,
   InstancedLineMaterial,
   RendererConfig,
   RendererEvents,
   RendererSubscription,
+  TestOptions,
 } from "./IRenderer";
 import { Input } from "./Input";
 import { DEFAULT_MESH_UP_AXIS, ModelCache } from "./ModelCache";
 import { PickedRenderable, Picker } from "./Picker";
 import type { Renderable } from "./Renderable";
 import { SceneExtension } from "./SceneExtension";
+import { SceneExtensionConfig } from "./SceneExtensionConfig";
 import { ScreenOverlay } from "./ScreenOverlay";
 import { SettingsManager, SettingsTreeEntry } from "./SettingsManager";
 import { SharedGeometry } from "./SharedGeometry";
@@ -56,26 +68,9 @@ import {
   normalizeTransformStamped,
 } from "./normalizeMessages";
 import { CameraStateSettings } from "./renderables/CameraStateSettings";
-import { Cameras } from "./renderables/Cameras";
-import { FrameAxes } from "./renderables/FrameAxes";
-import { Grids } from "./renderables/Grids";
 import { ImageMode } from "./renderables/ImageMode/ImageMode";
-import { Images } from "./renderables/Images";
-import { DownloadImageInfo } from "./renderables/Images/ImageTypes";
-import { LaserScans } from "./renderables/LaserScans";
-import { Markers } from "./renderables/Markers";
 import { MeasurementTool } from "./renderables/MeasurementTool";
-import { OccupancyGrids } from "./renderables/OccupancyGrids";
-import { PointClouds } from "./renderables/PointClouds";
-import { Polygons } from "./renderables/Polygons";
-import { PoseArrays } from "./renderables/PoseArrays";
-import { Poses } from "./renderables/Poses";
 import { PublishClickTool } from "./renderables/PublishClickTool";
-import { PublishSettings } from "./renderables/PublishSettings";
-import { FoxgloveSceneEntities } from "./renderables/SceneEntities";
-import { SceneSettings } from "./renderables/SceneSettings";
-import { Urdfs } from "./renderables/Urdfs";
-import { VelodyneScans } from "./renderables/VelodyneScans";
 import { MarkerPool } from "./renderables/markers/MarkerPool";
 import {
   Header,
@@ -88,7 +83,13 @@ import {
   Vector3,
 } from "./ros";
 import { SelectEntry } from "./settings";
-import { AddTransformResult, CoordinateFrame, Transform, TransformTree } from "./transforms";
+import {
+  AddTransformResult,
+  CoordinateFrame,
+  DEFAULT_MAX_CAPACITY_PER_FRAME,
+  TransformTree,
+  Transform,
+} from "./transforms";
 import { InterfaceMode } from "./types";
 
 const log = Logger.getLogger(__filename);
@@ -104,8 +105,8 @@ const MAX_SELECTIONS = 10;
 
 // NOTE: These do not use .convertSRGBToLinear() since background color is not
 // affected by gamma correction
-const LIGHT_BACKDROP = new THREE.Color(light.background?.default);
-const DARK_BACKDROP = new THREE.Color(dark.background?.default);
+const LIGHT_BACKDROP = new THREE.Color(palette.light.background?.default);
+const DARK_BACKDROP = new THREE.Color(palette.dark.background?.default);
 
 // Define rendering layers for multipass rendering used for the selection effect
 const LAYER_DEFAULT = 0;
@@ -116,13 +117,20 @@ const NO_FRAME_SELECTED = "NO_FRAME_SELECTED";
 const TF_OVERFLOW = "TF_OVERFLOW";
 const CYCLE_DETECTED = "CYCLE_DETECTED";
 const FOLLOW_FRAME_NOT_FOUND = "FOLLOW_FRAME_NOT_FOUND";
+const ADD_TRANSFORM_ERROR = "ADD_TRANSFORM_ERROR";
 
 // An extensionId for creating the top-level settings nodes such as "Topics" and
 // "Custom Layers"
 const RENDERER_ID = "foxglove.Renderer";
-
+/**
+ * temp variables declared here to avoid unnecessary allocations and
+ * subsequent garbage collection in high frequency operations
+ */
 const tempColor = new THREE.Color();
 const tempVec2 = new THREE.Vector2();
+// for transforms
+const tempVec3: vec3 = [0, 0, 0];
+const tempQuat: quat = [0, 0, 0, 1];
 
 // We use a patched version of THREE.js where the internal WebGLShaderCache class has been
 // modified to allow caching based on `vertexShaderKey` and/or `fragmentShaderKey` instead of
@@ -152,7 +160,8 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   #canvas: HTMLCanvasElement;
   public readonly gl: THREE.WebGLRenderer;
   public maxLod = DetailLevel.High;
-  public debugPicking = false;
+
+  public debugPicking: boolean;
   public config: Immutable<RendererConfig>;
   public settings: SettingsManager;
   // [{ name, datatype }]
@@ -166,9 +175,14 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   // extensionId -> SceneExtension
   public sceneExtensions = new Map<string, SceneExtension>();
   // datatype -> RendererSubscription[]
-  public schemaHandlers = new Map<string, RendererSubscription[]>();
+  public schemaSubscriptions = new Map<string, RendererSubscription[]>();
   // topicName -> RendererSubscription[]
-  public topicHandlers = new Map<string, RendererSubscription[]>();
+  public topicSubscriptions = new Map<string, RendererSubscription[]>();
+
+  /** HUD manager instance */
+  public hud;
+  /** Items to display in the HUD */
+  public hudItems: HUDItem[] = [];
   // layerId -> { action, handler }
   #customLayerActions = new Map<string, CustomLayerAction>();
   #scene: THREE.Scene;
@@ -191,38 +205,67 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   public ros = false;
 
   #picker: Picker;
+  #selectionBackdropScene: THREE.Scene;
   #selectionBackdrop: ScreenOverlay;
   #selectedRenderable: PickedRenderable | undefined;
   public colorScheme: "dark" | "light" = "light";
   public modelCache: ModelCache;
-  public transformTree = new TransformTree();
+
+  /**
+   * Max capacity should be chosen to be at least several multiples of
+   * the CoordinateFrame transform max capacity. So that it can store
+   * several coordinate frames being emptied.
+   * It's mostly important to not let this grow unbounded.
+   */
+  #transformPool = new ObjectPool(Transform.Empty, {
+    maxCapacity: 5 * DEFAULT_MAX_CAPACITY_PER_FRAME,
+  });
+  public transformTree = new TransformTree(this.#transformPool);
+
   public coordinateFrameList: SelectEntry[] = [];
   public currentTime = 0n;
   public fixedFrameId: string | undefined;
   public followFrameId: string | undefined;
 
-  public labelPool = new LabelPool({ fontFamily: fonts.MONOSPACE });
+  public labelPool = new LabelPool({ fontFamily: fontMonospace });
   public markerPool = new MarkerPool(this);
   public sharedGeometry = new SharedGeometry();
 
   #prevResolution = new THREE.Vector2();
   #pickingEnabled = false;
+  #rendering = false;
   #animationFrame?: number;
   #cameraSyncError: undefined | string;
   #devicePixelRatioMediaQuery?: MediaQueryList;
+  #fetchAsset: BuiltinPanelExtensionContext["unstable_fetchAsset"];
 
-  public constructor(
-    canvas: HTMLCanvasElement,
-    config: Immutable<RendererConfig>,
-    interfaceMode: InterfaceMode,
-  ) {
+  public readonly displayTemporaryError?: (str: string) => void;
+  /** Options passed for local testing and storybook. */
+  public readonly testOptions: TestOptions;
+  public analytics?: IAnalytics;
+
+  public constructor(args: {
+    canvas: HTMLCanvasElement;
+    config: Immutable<RendererConfig>;
+    interfaceMode: InterfaceMode;
+    sceneExtensionConfig: SceneExtensionConfig;
+    fetchAsset: BuiltinPanelExtensionContext["unstable_fetchAsset"];
+    displayTemporaryError?: (message: string) => void;
+    testOptions: TestOptions;
+  }) {
     super();
+    this.displayTemporaryError = args.displayTemporaryError;
     // NOTE: Global side effect
     THREE.Object3D.DEFAULT_UP = new THREE.Vector3(0, 0, 1);
 
-    this.interfaceMode = interfaceMode;
-    this.#canvas = canvas;
-    this.config = config;
+    const interfaceMode = (this.interfaceMode = args.interfaceMode);
+    const canvas = (this.#canvas = args.canvas);
+    const config = (this.config = args.config);
+    this.#fetchAsset = args.fetchAsset;
+    this.testOptions = args.testOptions;
+    this.debugPicking = args.testOptions.debugPicking ?? false;
+
+    this.hud = new HUDItemManager(this.#onHUDItemsChange);
 
     this.settings = new SettingsManager(baseSettingsTree(this.interfaceMode));
     this.settings.on("update", () => this.emit("settingsTreeChange", this));
@@ -240,7 +283,6 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     if (!this.gl.capabilities.isWebGL2) {
       throw new Error("WebGL2 is not supported");
     }
-    this.gl.outputEncoding = THREE.sRGBEncoding;
     this.gl.toneMapping = THREE.NoToneMapping;
     this.gl.autoClear = false;
     this.gl.info.autoReset = false;
@@ -261,11 +303,12 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       ignoreColladaUpAxis: config.scene.ignoreColladaUpAxis ?? false,
       meshUpAxis: config.scene.meshUpAxis ?? DEFAULT_MESH_UP_AXIS,
       edgeMaterial: this.outlineMaterial,
+      fetchAsset: this.#fetchAsset,
     });
 
     this.#scene = new THREE.Scene();
 
-    this.#dirLight = new THREE.DirectionalLight();
+    this.#dirLight = new THREE.DirectionalLight(0xffffff, Math.PI);
     this.#dirLight.position.set(1, 1, 1);
     this.#dirLight.castShadow = true;
     this.#dirLight.layers.enableAll();
@@ -276,76 +319,74 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     this.#dirLight.shadow.camera.far = 500;
     this.#dirLight.shadow.bias = -0.00001;
 
-    this.#hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.5);
+    this.#hemiLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.5 * Math.PI);
     this.#hemiLight.layers.enableAll();
 
     this.#scene.add(this.#dirLight);
     this.#scene.add(this.#hemiLight);
 
     this.input = new Input(canvas, () => this.cameraHandler.getActiveCamera());
-    this.input.on("resize", (size) => this.#resizeHandler(size));
-    this.input.on("click", (cursorCoords) => this.#clickHandler(cursorCoords));
+    this.input.on("resize", (size) => {
+      this.#resizeHandler(size);
+    });
+    this.input.on("click", (cursorCoords) => {
+      this.#clickHandler(cursorCoords);
+    });
 
     this.#picker = new Picker(this.gl, this.#scene);
 
     this.#selectionBackdrop = new ScreenOverlay(this);
-    this.#selectionBackdrop.visible = false;
-    this.#scene.add(this.#selectionBackdrop);
+    this.#selectionBackdropScene = new THREE.Scene();
+    this.#selectionBackdropScene.add(this.#selectionBackdrop);
 
     const samples = msaaSamples(this.gl.capabilities);
     const renderSize = this.gl.getDrawingBufferSize(tempVec2);
     log.debug(`Initialized ${renderSize.width}x${renderSize.height} renderer (${samples}x MSAA)`);
 
-    this.measurementTool = new MeasurementTool(this);
-    this.publishClickTool = new PublishClickTool(this);
+    const { reserved } = args.sceneExtensionConfig;
+
+    this.measurementTool = reserved.measurementTool.init(this);
+    this.publishClickTool = reserved.publishClickTool.init(this);
+    this.#addSceneExtension(this.measurementTool);
+    this.#addSceneExtension(this.publishClickTool);
 
     const aspect = renderSize.width / renderSize.height;
     switch (interfaceMode) {
-      case "image":
-        this.#imageModeExtension = new ImageMode(this, {
-          canvasSize: this.input.canvasSize,
-          // eslint-disable-next-line @foxglove/no-boolean-parameters
-          setHasCalibrationTopic: (hasCameraCalibrationTopic: boolean) => {
-            if (hasCameraCalibrationTopic) {
-              this.#disableImageOnlySubscriptionMode();
-            } else {
-              this.#enableImageOnlySubscriptionMode();
-            }
-          },
-        });
+      case "image": {
+        const imageMode = reserved.imageMode.init(this);
+        this.#imageModeExtension = imageMode;
         this.cameraHandler = this.#imageModeExtension;
         this.#imageModeExtension.addEventListener("hasModifiedViewChanged", () => {
           this.emit("resetViewChanged", this);
         });
-        this.#addSceneExtension(this.cameraHandler);
+        this.#addSceneExtension(this.#imageModeExtension);
         break;
-      case "3d":
+      }
+      case "3d": {
         this.cameraHandler = new CameraStateSettings(this, this.#canvas, aspect);
         this.#addSceneExtension(this.cameraHandler);
-        this.#addSceneExtension(new PublishSettings(this));
-        this.#addSceneExtension(new Images(this));
-        this.#addSceneExtension(new Cameras(this));
         break;
+      }
     }
 
-    this.#addSceneExtension(new SceneSettings(this));
-    this.#addSceneExtension(new FrameAxes(this, { visible: interfaceMode === "3d" }));
-    this.#addSceneExtension(new Grids(this));
-    this.#addSceneExtension(new Markers(this));
-    this.#addSceneExtension(new FoxgloveSceneEntities(this));
-    this.#addSceneExtension(new FoxgloveGrid(this));
-    this.#addSceneExtension(new LaserScans(this));
-    this.#addSceneExtension(new OccupancyGrids(this));
-    this.#addSceneExtension(new PointClouds(this));
-    this.#addSceneExtension(new Polygons(this));
-    this.#addSceneExtension(new Poses(this));
-    this.#addSceneExtension(new PoseArrays(this));
-    this.#addSceneExtension(new Urdfs(this));
-    this.#addSceneExtension(new VelodyneScans(this));
-    this.#addSceneExtension(this.measurementTool);
-    this.#addSceneExtension(this.publishClickTool);
+    const { extensionsById } = args.sceneExtensionConfig;
+    for (const extensionItem of Object.values(extensionsById)) {
+      if (
+        extensionItem.supportedInterfaceModes == undefined ||
+        extensionItem.supportedInterfaceModes.includes(interfaceMode)
+      ) {
+        this.#addSceneExtension(extensionItem.init(this));
+      }
+    }
+
+    log.debug(
+      `Renderer initialized with scene extensions ${Array.from(this.sceneExtensions.keys()).join(
+        ", ",
+      )}`,
+    );
+
     if (interfaceMode === "image" && config.imageMode.calibrationTopic == undefined) {
-      this.#enableImageOnlySubscriptionMode();
+      this.enableImageOnlySubscriptionMode();
     } else {
       this.#addTransformSubscriptions();
       this.#addSubscriptionsFromSceneExtensions();
@@ -356,6 +397,11 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     this.setCameraState(config.cameraState);
     this.animationFrame();
   }
+
+  #onHUDItemsChange = () => {
+    this.hudItems = this.hud.getHUDItems();
+    this.emit("hudItemsChanged", this);
+  };
 
   #onDevicePixelRatioChange = () => {
     log.debug(`devicePixelRatio changed to ${window.devicePixelRatio}`);
@@ -389,6 +435,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
     this.labelPool.dispose();
     this.markerPool.dispose();
+    this.#transformPool.clear();
     this.#picker.dispose();
     this.input.dispose();
     this.gl.dispose();
@@ -436,16 +483,24 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
    * @param {boolean} params.clearTransforms - whether to clear the transform tree. This should be set to true when a seek to a previous time is performed in order
    * order to flush potential future state to the newly set time.
    * @param {boolean} params.resetAllFramesCursor - whether to reset the cursor for the allFrames array.
+   * Order to clear ImageMode renderables or not. Defaults to true. Not relevant in 3D panel.
+   * @param {boolean} params.clearImageModeExtension - whether to reset ImageMode renderables in clear.
    */
   public clear(
     {
       clearTransforms,
       resetAllFramesCursor,
-    }: { clearTransforms?: boolean; resetAllFramesCursor?: boolean } = {
+      clearImageModeExtension = true,
+    }: {
+      clearTransforms?: boolean;
+      resetAllFramesCursor?: boolean;
+      clearImageModeExtension?: boolean;
+    } = {
       clearTransforms: false,
       resetAllFramesCursor: false,
     },
   ): void {
+    this.#clearSubscriptionQueues();
     if (clearTransforms === true) {
       this.#clearTransformTree();
     }
@@ -453,8 +508,12 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       this.#resetAllFramesCursor();
     }
     this.settings.errors.clear();
+    this.hud.clear();
 
     for (const extension of this.sceneExtensions.values()) {
+      if (!clearImageModeExtension && extension === this.#imageModeExtension) {
+        continue;
+      }
       extension.removeAllRenderables();
     }
     this.queueAnimationFrame();
@@ -463,13 +522,26 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   #allFramesCursor: {
     // index represents where the last read message is in allFrames
     index: number;
-    lastReadMessage: MessageEvent<unknown> | undefined;
+    lastReadMessage: MessageEvent | undefined;
     cursorTimeReached?: Time;
   } = {
     index: -1,
     lastReadMessage: undefined,
     cursorTimeReached: undefined,
   };
+
+  #clearSubscriptionQueues(): void {
+    for (const subscriptions of this.topicSubscriptions.values()) {
+      for (const subscription of subscriptions) {
+        subscription.queue = undefined;
+      }
+    }
+    for (const subscriptions of this.schemaSubscriptions.values()) {
+      for (const subscription of subscriptions) {
+        subscription.queue = undefined;
+      }
+    }
+  }
 
   #resetAllFramesCursor() {
     this.#allFramesCursor = {
@@ -609,10 +681,16 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       for (const subscription of subscriptions) {
         switch (subscription.type) {
           case "schema":
-            this.#addSchemaSubscriptions(subscription.schemaNames, subscription.subscription);
+            this.#addSchemaSubscriptions(
+              subscription.schemaNames,
+              subscription.subscription as RendererSubscription,
+            );
             break;
           case "topic":
-            this.#addTopicSubscription(subscription.topicName, subscription.subscription);
+            this.#addTopicSubscription(
+              subscription.topicName,
+              subscription.subscription as RendererSubscription,
+            );
             break;
         }
       }
@@ -621,10 +699,10 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
   // Clear topic and schema subscriptions and emit change events for both
   #clearSubscriptions(): void {
-    this.topicHandlers.clear();
-    this.schemaHandlers.clear();
-    this.emit("topicHandlersChanged", this);
-    this.emit("schemaHandlersChanged", this);
+    this.topicSubscriptions.clear();
+    this.schemaSubscriptions.clear();
+    this.emit("topicSubscriptionsChanged", this);
+    this.emit("schemaSubscriptionsChanged", this);
   }
 
   #addSchemaSubscriptions<T>(
@@ -632,24 +710,24 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     subscription: RendererSubscription<T>,
   ): void {
     for (const schemaName of schemaNames) {
-      let handlers = this.schemaHandlers.get(schemaName);
+      let handlers = this.schemaSubscriptions.get(schemaName);
       if (!handlers) {
         handlers = [];
-        this.schemaHandlers.set(schemaName, handlers);
+        this.schemaSubscriptions.set(schemaName, handlers);
       }
       handlers.push(subscription as RendererSubscription);
     }
-    this.emit("schemaHandlersChanged", this);
+    this.emit("schemaSubscriptionsChanged", this);
   }
 
   #addTopicSubscription<T>(topic: string, subscription: RendererSubscription<T>): void {
-    let handlers = this.topicHandlers.get(topic);
+    let handlers = this.topicSubscriptions.get(topic);
     if (!handlers) {
       handlers = [];
-      this.topicHandlers.set(topic, handlers);
+      this.topicSubscriptions.set(topic, handlers);
     }
     handlers.push(subscription as RendererSubscription);
-    this.emit("topicHandlersChanged", this);
+    this.emit("topicSubscriptionsChanged", this);
   }
 
   /**
@@ -657,12 +735,16 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
    * This mode should only be enabled in ImageMode when there is no calibration topic selected. Disabling these subscriptions
    * prevents the 3D aspects of the scene from being rendered from an insufficient camera info.
    */
-  #enableImageOnlySubscriptionMode = (): void => {
+  public enableImageOnlySubscriptionMode = (): void => {
     assert(
       this.#imageModeExtension,
       "Image mode extension should be defined when calling enable Image only mode",
     );
-    this.clear({ clearTransforms: true, resetAllFramesCursor: true });
+    this.clear({
+      clearTransforms: true,
+      resetAllFramesCursor: true,
+      clearImageModeExtension: false,
+    });
     this.#clearSubscriptions();
     this.#addSubscriptionsFromSceneExtensions(
       (extension) => extension === this.#imageModeExtension,
@@ -670,10 +752,14 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     this.settings.addNodeValidator(this.#imageOnlyModeTopicSettingsValidator);
   };
 
-  #disableImageOnlySubscriptionMode = (): void => {
+  public disableImageOnlySubscriptionMode = (): void => {
     // .clear() will clean up remaining errors on topics
     this.settings.removeNodeValidator(this.#imageOnlyModeTopicSettingsValidator);
-    this.clear({ clearTransforms: true, resetAllFramesCursor: true });
+    this.clear({
+      clearTransforms: true,
+      resetAllFramesCursor: true,
+      clearImageModeExtension: false,
+    });
     this.#clearSubscriptions();
     this.#addSubscriptionsFromSceneExtensions();
     this.#addTransformSubscriptions();
@@ -768,7 +854,9 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   public setColorScheme(colorScheme: "dark" | "light", backgroundColor: string | undefined): void {
     this.colorScheme = colorScheme;
 
-    const bgColor = backgroundColor ? stringToRgb(tempColor, backgroundColor) : undefined;
+    const bgColor = backgroundColor
+      ? stringToRgb(tempColor, backgroundColor).convertSRGBToLinear()
+      : undefined;
 
     for (const extension of this.sceneExtensions.values()) {
       extension.setColorScheme(colorScheme, bgColor);
@@ -841,10 +929,6 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     this.queueAnimationFrame();
   }
 
-  public getCurrentImage(): DownloadImageInfo | undefined {
-    return this.#imageModeExtension?.getLatestImage();
-  }
-
   public setSelectedRenderable(selection: PickedRenderable | undefined): void {
     if (this.#selectedRenderable === selection) {
       return;
@@ -864,6 +948,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       selectObject(selection.renderable);
       log.debug(
         `Selected ${selection.renderable.id} (${selection.renderable.name}) (instance=${selection.instanceIndex})`,
+        selection.renderable,
       );
     }
 
@@ -908,8 +993,8 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       this.addCoordinateFrame(maybeHasFrameId.frame_id);
     }
 
-    handleMessage(messageEvent, this.topicHandlers.get(messageEvent.topic));
-    handleMessage(messageEvent, this.schemaHandlers.get(messageEvent.schemaName));
+    queueMessage(messageEvent, this.topicSubscriptions.get(messageEvent.topic));
+    queueMessage(messageEvent, this.schemaSubscriptions.get(messageEvent.schemaName));
   }
 
   /** Match the behavior of `tf::Transformer` by stripping leading slashes from
@@ -938,21 +1023,37 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   #addFrameTransform(transform: FrameTransform): void {
     const parentId = transform.parent_frame_id;
     const childId = transform.child_frame_id;
-    const stamp = toNanoSec(transform.timestamp);
-    const t = transform.translation;
-    const q = transform.rotation;
+    try {
+      const stamp = toNanoSec(transform.timestamp);
+      const t = transform.translation;
+      const q = transform.rotation;
 
-    this.addTransform(parentId, childId, stamp, t, q);
+      this.addTransform(parentId, childId, stamp, t, q);
+    } catch (err) {
+      this.settings.errors.add(
+        ["transforms"],
+        ADD_TRANSFORM_ERROR,
+        `Error adding transform for frame ${childId}: ${err.message}`,
+      );
+    }
   }
 
   #addTransformMessage(tf: TransformStamped): void {
     const normalizedParentId = this.normalizeFrameId(tf.header.frame_id);
     const normalizedChildId = this.normalizeFrameId(tf.child_frame_id);
-    const stamp = toNanoSec(tf.header.stamp);
-    const t = tf.transform.translation;
-    const q = tf.transform.rotation;
+    try {
+      const stamp = toNanoSec(tf.header.stamp);
+      const t = tf.transform.translation;
+      const q = tf.transform.rotation;
 
-    this.addTransform(normalizedParentId, normalizedChildId, stamp, t, q);
+      this.addTransform(normalizedParentId, normalizedChildId, stamp, t, q);
+    } catch (err) {
+      this.settings.errors.add(
+        ["transforms"],
+        ADD_TRANSFORM_ERROR,
+        `Error adding transform for frame ${normalizedChildId}: ${err.message}`,
+      );
+    }
   }
 
   // Create a new transform and add it to the renderer's TransformTree
@@ -967,7 +1068,17 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     const t = translation;
     const q = rotation;
 
-    const transform = new Transform([t.x, t.y, t.z], [q.x, q.y, q.z, q.w]);
+    tempVec3[0] = t.x;
+    tempVec3[1] = t.y;
+    tempVec3[2] = t.z;
+
+    tempQuat[0] = q.x;
+    tempQuat[1] = q.y;
+    tempQuat[2] = q.z;
+    tempQuat[3] = q.w;
+
+    const transform = this.#transformPool.acquire();
+    transform.setPositionRotation(tempVec3, tempQuat);
     const status = this.transformTree.addTransform(childFrameId, parentFrameId, stamp, transform);
 
     if (status === AddTransformResult.UPDATED) {
@@ -1012,7 +1123,10 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
   public animationFrame = (): void => {
     this.#animationFrame = undefined;
-    this.#frameHandler(this.currentTime);
+    if (!this.#rendering) {
+      this.#frameHandler(this.currentTime);
+      this.#rendering = false;
+    }
   };
 
   public queueAnimationFrame(): void {
@@ -1022,12 +1136,23 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
   }
 
   public setFollowFrameId(frameId: string | undefined): void {
+    if (this.followFrameId !== frameId) {
+      log.debug(`Setting followFrameId to ${frameId}`);
+    }
     this.followFrameId = frameId;
-    log.debug(`Setting followFrameId to ${frameId}`);
+  }
+
+  public async fetchAsset(
+    uri: string,
+    options?: { signal?: AbortSignal; baseUrl?: string },
+  ): Promise<Asset> {
+    return await this.#fetchAsset(uri, options);
   }
 
   #frameHandler = (currentTime: bigint): void => {
+    this.#rendering = true;
     this.currentTime = currentTime;
+    this.#handleSubscriptionQueues();
     this.#updateFrameErrors();
     this.#updateFixedFrameId();
     this.#updateResolution();
@@ -1037,7 +1162,6 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
     const camera = this.cameraHandler.getActiveCamera();
     camera.layers.set(LAYER_DEFAULT);
-    this.#selectionBackdrop.visible = this.#selectedRenderable != undefined;
 
     // use the FALLBACK_FRAME_ID if renderFrame is undefined and there are no options for transforms
     const renderFrameId =
@@ -1053,9 +1177,9 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     this.gl.render(this.#scene, camera);
 
     if (this.#selectedRenderable) {
+      this.gl.render(this.#selectionBackdropScene, camera);
       this.gl.clearDepth();
       camera.layers.set(LAYER_SELECTED);
-      this.#selectionBackdrop.visible = false;
       this.gl.render(this.#scene, camera);
     }
 
@@ -1063,6 +1187,36 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
     this.gl.info.reset();
   };
+
+  /** iterates through all subscription message queues, processes them, and calls their handler for each message in the frame */
+  #handleSubscriptionQueues(): void {
+    for (const subscriptions of this.topicSubscriptions.values()) {
+      for (const subscription of subscriptions) {
+        if (!subscription.queue) {
+          continue;
+        }
+        const { queue, filterQueue } = subscription;
+        const processedQueue = filterQueue ? filterQueue(queue) : queue;
+        subscription.queue = undefined;
+        for (const messageEvent of processedQueue) {
+          subscription.handler(messageEvent);
+        }
+      }
+    }
+    for (const subscriptions of this.schemaSubscriptions.values()) {
+      for (const subscription of subscriptions) {
+        if (!subscription.queue) {
+          continue;
+        }
+        const { queue, filterQueue } = subscription;
+        const processedQueue = filterQueue ? filterQueue(queue) : queue;
+        subscription.queue = undefined;
+        for (const messageEvent of processedQueue) {
+          subscription.handler(messageEvent);
+        }
+      }
+    }
+  }
 
   #updateFixedFrameId(): void {
     const frame =
@@ -1119,6 +1273,10 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       selections.length < MAX_SELECTIONS
     ) {
       selections.push(curSelection);
+      // If debugPicking is on, we don't want to overwrite the hitmap by doing more iterations
+      if (this.debugPicking) {
+        break;
+      }
       curSelection.renderable.visible = false;
       this.gl.render(this.#scene, camera);
     }
@@ -1232,6 +1390,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       { debug: this.debugPicking, disableSetViewOffset: this.interfaceMode === "image" },
     );
     if (objectId === -1) {
+      log.debug("Picking did not return an object");
       return undefined;
     }
 
@@ -1255,6 +1414,8 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       return undefined;
     }
 
+    log.debug(`Picking pass returned ${renderable.id} (${renderable.name})`, renderable);
+
     let instanceIndex: number | undefined;
     if (renderable.pickableInstances) {
       instanceIndex = this.#picker.pickInstance(
@@ -1265,6 +1426,7 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
         { debug: this.debugPicking, disableSetViewOffset: this.interfaceMode === "image" },
       );
       instanceIndex = instanceIndex === -1 ? undefined : instanceIndex;
+      log.debug("Instance picking pass on", renderable, "returned", instanceIndex);
     }
 
     return { renderable, instanceIndex };
@@ -1301,6 +1463,11 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
     this.settings.errors.remove(FOLLOW_TF_PATH, FOLLOW_FRAME_NOT_FOUND);
   }
+  public getContextMenuItems = (): PanelContextMenuItem[] => {
+    return Array.from(this.sceneExtensions.values()).flatMap((extension) =>
+      extension.getContextMenuItems(),
+    );
+  };
 
   #updateResolution(): void {
     const resolution = this.input.canvasSize;
@@ -1322,15 +1489,56 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
       }
     });
   }
+
+  public getDropStatus = (paths: readonly DraggedMessagePath[]): MessagePathDropStatus => {
+    const effects: ("add" | "replace")[] = [];
+    for (const path of paths) {
+      let effect;
+      for (const extension of this.sceneExtensions.values()) {
+        const maybeEffect = extension.getDropEffectForPath(path);
+        if (maybeEffect) {
+          effect = maybeEffect;
+          break;
+        }
+      }
+      // if a single path does not have a drop effect, all paths are not droppable
+      if (effect == undefined) {
+        return { canDrop: false };
+      }
+      effects.push(effect);
+    }
+    // prioritize replace effect over add
+    const finalEffect = effects.includes("replace") ? "replace" : "add";
+
+    return {
+      canDrop: true,
+      effect: finalEffect,
+    };
+  };
+
+  public handleDrop = (paths: readonly DraggedMessagePath[]): void => {
+    this.updateConfig((draft) => {
+      for (const path of paths) {
+        for (const extension of this.sceneExtensions.values()) {
+          extension.updateConfigForDropPath(draft, path);
+        }
+      }
+    });
+  };
+
+  public setAnalytics(analytics: IAnalytics): void {
+    this.analytics = analytics;
+  }
 }
 
-function handleMessage(
+function queueMessage(
   messageEvent: Readonly<MessageEvent>,
   subscriptions: RendererSubscription[] | undefined,
 ): void {
   if (subscriptions) {
     for (const subscription of subscriptions) {
-      subscription.handler(messageEvent);
+      subscription.queue = subscription.queue ?? [];
+      subscription.queue.push(messageEvent);
     }
   }
 }

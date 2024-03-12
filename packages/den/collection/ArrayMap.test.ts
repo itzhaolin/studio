@@ -98,7 +98,9 @@ describe("ArrayMap", () => {
   it("removes elements after key", () => {
     const list = new ArrayMap<number, string>();
     const data = [...Array(10).keys()];
-    data.forEach((val) => list.set(val, String(val)));
+    data.forEach((val) => {
+      list.set(val, String(val));
+    });
     list.removeAfter(4.5);
     expect(list.size).toBe(5);
     expect(list.binarySearch(0)).toBe(0);
@@ -116,7 +118,9 @@ describe("ArrayMap", () => {
   it("removes elements before key", () => {
     const list = new ArrayMap<number, string>();
     const data = [...Array(10).keys()];
-    data.forEach((val) => list.set(val, String(val)));
+    data.forEach((val) => {
+      list.set(val, String(val));
+    });
     list.removeBefore(4.5);
     expect(list.size).toBe(5);
     expect(list.binarySearch(0)).toBe(-1);
@@ -134,7 +138,9 @@ describe("ArrayMap", () => {
   it("removes specific elements", () => {
     const list = new ArrayMap<number, string>();
     const data = [...Array(10).keys()];
-    data.forEach((val) => list.set(val, String(val)));
+    data.forEach((val) => {
+      list.set(val, String(val));
+    });
     list.remove(3);
     expect(list.size).toBe(9);
     expect(list.binarySearch(0)).toBe(0);
@@ -147,5 +153,26 @@ describe("ArrayMap", () => {
     expect(list.binarySearch(7)).toBe(6);
     expect(list.binarySearch(8)).toBe(7);
     expect(list.binarySearch(9)).toBe(8);
+  });
+
+  it("iterates properly", () => {
+    const list = new ArrayMap<number, string>();
+    const data = [...Array(10).keys()];
+    data.forEach((val) => {
+      list.set(val, String(val));
+    });
+    let i = 0;
+    for (const [k, v] of list) {
+      expect(k).toBe(data[i]);
+      expect(v).toBe(data[i]!.toString());
+      i++;
+    }
+  });
+
+  it("does not return referentially the same object from set when replacing", () => {
+    const list = new ArrayMap<number, { a: number }>();
+    list.set(1, { a: 1 });
+    const prev = list.set(1, { a: 2 });
+    expect(prev).not.toBe(list.at(list.binarySearch(1))![1]);
   });
 });

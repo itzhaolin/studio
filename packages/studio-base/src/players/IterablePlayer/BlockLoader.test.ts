@@ -2,19 +2,22 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { MessageEvent } from "@foxglove/studio";
+import { Immutable, MessageEvent } from "@foxglove/studio";
 import PlayerProblemManager from "@foxglove/studio-base/players/PlayerProblemManager";
+import { MessageBlock } from "@foxglove/studio-base/players/types";
+import { mockTopicSelection } from "@foxglove/studio-base/test/mocks/mockTopicSelection";
 
-import { BlockLoader } from "./BlockLoader";
+import { BlockLoader, MEMORY_INFO_PRELOADED_MSGS } from "./BlockLoader";
 import {
-  IIterableSource,
-  Initalization,
-  MessageIteratorArgs,
-  IteratorResult,
   GetBackfillMessagesArgs,
+  IDeserializedIterableSource,
+  Initalization,
+  IteratorResult,
+  MessageIteratorArgs,
 } from "./IIterableSource";
 
-class TestSource implements IIterableSource {
+class TestSource implements IDeserializedIterableSource {
+  public readonly sourceType = "deserialized";
   public async initialize(): Promise<Initalization> {
     return {
       start: { sec: 0, nsec: 0 },
@@ -36,7 +39,9 @@ class TestSource implements IIterableSource {
     return [];
   }
 }
+
 const consoleErrorMock = console.error as ReturnType<typeof jest.fn>;
+
 describe("BlockLoader", () => {
   it("should make an empty block loader", async () => {
     const loader = new BlockLoader({
@@ -56,6 +61,9 @@ describe("BlockLoader", () => {
           messageCache: {
             blocks: [undefined, undefined, undefined, undefined],
             startTime: { sec: 0, nsec: 0 },
+          },
+          memoryInfo: {
+            [MEMORY_INFO_PRELOADED_MSGS]: 0,
           },
         });
         await loader.stopLoading();
@@ -92,8 +100,7 @@ describe("BlockLoader", () => {
     source.messageIterator = async function* messageIterator(
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
-      for (let i = 0; i < msgEvents.length; ++i) {
-        const msgEvent = msgEvents[i]!;
+      for (const msgEvent of msgEvents) {
         yield {
           type: "message-event",
           msgEvent,
@@ -101,7 +108,7 @@ describe("BlockLoader", () => {
       }
     };
 
-    loader.setTopics(new Set("a"));
+    loader.setTopics(mockTopicSelection("a"));
     let count = 0;
     await loader.startLoading({
       progress: async (progress) => {
@@ -122,39 +129,42 @@ describe("BlockLoader", () => {
                 messagesByTopic: {
                   a: [msgEvents[0]],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 1,
               },
               {
                 messagesByTopic: {
                   a: [msgEvents[1]],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 1,
               },
               {
                 messagesByTopic: {
                   a: [],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 0,
               },
               {
                 messagesByTopic: {
                   a: [msgEvents[2]],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 1,
               },
               {
                 messagesByTopic: {
                   a: [msgEvents[3]],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 1,
               },
             ],
             startTime: { sec: 0, nsec: 0 },
+          },
+          memoryInfo: {
+            [MEMORY_INFO_PRELOADED_MSGS]: 4,
           },
         });
 
@@ -192,8 +202,7 @@ describe("BlockLoader", () => {
     source.messageIterator = async function* messageIterator(
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
-      for (let i = 0; i < msgEvents.length; ++i) {
-        const msgEvent = msgEvents[i]!;
+      for (const msgEvent of msgEvents) {
         yield {
           type: "message-event",
           msgEvent,
@@ -201,10 +210,11 @@ describe("BlockLoader", () => {
       }
     };
 
-    loader.setTopics(new Set("a"));
+    loader.setTopics(mockTopicSelection("a"));
+    let progressCount = 0;
     await loader.startLoading({
       progress: async (progress) => {
-        expect(progress).toEqual({
+        expect(progress).toMatchObject({
           fullyLoadedFractionRanges: [
             {
               start: 0,
@@ -217,20 +227,22 @@ describe("BlockLoader", () => {
                 messagesByTopic: {
                   a: [msgEvents[0], msgEvents[1]],
                 },
-                needTopics: new Set(),
+                needTopics: new Map(),
                 sizeInBytes: 2,
               },
             ],
             startTime: { sec: 0, nsec: 0 },
           },
         });
-
-        await loader.stopLoading();
+        // need to wait for second progress call to receive cache full error
+        if (++progressCount > 1) {
+          await loader.stopLoading();
+        }
       },
     });
     expect(consoleErrorMock.mock.calls[0] ?? []).toContain("cache-full");
     consoleErrorMock.mockClear();
-    expect.assertions(2);
+    expect.assertions(3);
   });
 
   it("should remove unused topics on blocks if cache is full", async () => {
@@ -267,10 +279,9 @@ describe("BlockLoader", () => {
     source.messageIterator = async function* messageIterator(
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
-      for (let i = 0; i < msgEvents.length; ++i) {
-        const msgEvent = msgEvents[i]!;
+      for (const msgEvent of msgEvents) {
         // need to filter iterator by requested topics since there's messages from more than 1 topic in here
-        if (_args.topics.includes(msgEvent.topic)) {
+        if (_args.topics.has(msgEvent.topic)) {
           yield {
             type: "message-event",
             msgEvent,
@@ -279,7 +290,7 @@ describe("BlockLoader", () => {
       }
     };
 
-    loader.setTopics(new Set("a"));
+    loader.setTopics(mockTopicSelection("a"));
     let count = 0;
     await loader.startLoading({
       progress: async (progress) => {
@@ -300,17 +311,20 @@ describe("BlockLoader", () => {
                     a: [msgEvents[0], msgEvents[2], msgEvents[4]],
                   },
                   sizeInBytes: 3,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
                 {
                   messagesByTopic: {
                     a: [msgEvents[6]],
                   },
                   sizeInBytes: 1,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
               ],
               startTime: { sec: 0, nsec: 0 },
+            },
+            memoryInfo: {
+              [MEMORY_INFO_PRELOADED_MSGS]: 4,
             },
           });
           await loader.stopLoading();
@@ -318,7 +332,7 @@ describe("BlockLoader", () => {
       },
     });
 
-    loader.setTopics(new Set("b"));
+    loader.setTopics(mockTopicSelection("b"));
 
     count = 0;
     // at the end of loading "b" topic it should have removed the "a" topic as its no longer used.
@@ -341,17 +355,20 @@ describe("BlockLoader", () => {
                     b: [msgEvents[1], msgEvents[3], msgEvents[5]],
                   },
                   sizeInBytes: 3,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
                 {
                   messagesByTopic: {
                     b: [msgEvents[7]],
                   },
                   sizeInBytes: 1,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
               ],
               startTime: { sec: 0, nsec: 0 },
+            },
+            memoryInfo: {
+              [MEMORY_INFO_PRELOADED_MSGS]: 4,
             },
           });
           await loader.stopLoading();
@@ -388,8 +405,7 @@ describe("BlockLoader", () => {
     source.messageIterator = async function* messageIterator(
       _args: MessageIteratorArgs,
     ): AsyncIterableIterator<Readonly<IteratorResult>> {
-      for (let i = 0; i < msgEvents.length; ++i) {
-        const msgEvent = msgEvents[i]!;
+      for (const msgEvent of msgEvents) {
         yield {
           type: "message-event",
           msgEvent,
@@ -397,7 +413,7 @@ describe("BlockLoader", () => {
       }
     };
 
-    loader.setTopics(new Set("a"));
+    loader.setTopics(mockTopicSelection("a"));
     let count = 0;
     await loader.startLoading({
       progress: async (progress) => {
@@ -422,17 +438,20 @@ describe("BlockLoader", () => {
                     a: [msgEvents[0], msgEvents[1], msgEvents[2]],
                   },
                   sizeInBytes: 0,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
                 {
                   messagesByTopic: {
                     a: [msgEvents[3]],
                   },
                   sizeInBytes: 0,
-                  needTopics: new Set(),
+                  needTopics: new Map(),
                 },
               ],
               startTime: { sec: 0, nsec: 0 },
+            },
+            memoryInfo: {
+              [MEMORY_INFO_PRELOADED_MSGS]: 0,
             },
           });
 
@@ -449,5 +468,209 @@ describe("BlockLoader", () => {
         }
       },
     });
+  });
+
+  it("should drop preloaded topics when subscription options change", async () => {
+    const source = new TestSource();
+    const maxBlockCount = 2;
+    const loader = new BlockLoader({
+      maxBlocks: maxBlockCount,
+      cacheSizeBytes: 60,
+      minBlockDurationNs: 1,
+      source,
+      start: { sec: 0, nsec: 0 },
+      end: { sec: 9, nsec: 0 },
+      problemManager: new PlayerProblemManager(),
+    });
+
+    const msgEvents: MessageEvent[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      msgEvents.push({
+        topic: "a",
+        receiveTime: { sec: i, nsec: 0 },
+        message: undefined,
+        sizeInBytes: 10,
+        schemaName: "foo",
+      });
+    }
+    const slicedMsgEvents = msgEvents.map((msgEvent) => ({ ...msgEvent, sizeInBytes: 1 }));
+
+    source.messageIterator = async function* messageIterator(
+      args: MessageIteratorArgs,
+    ): AsyncIterableIterator<Readonly<IteratorResult>> {
+      const fields = args.topics.get("a")?.fields;
+      const events = fields ? slicedMsgEvents : msgEvents;
+      for (const msgEvent of events) {
+        yield {
+          type: "message-event",
+          msgEvent,
+        };
+      }
+    };
+
+    loader.setTopics(mockTopicSelection("a"));
+    let progressCount = 0;
+    await loader.startLoading({
+      progress: async (progress) => {
+        expect(progress).toMatchObject({
+          fullyLoadedFractionRanges: [
+            {
+              start: 0,
+              end: 0.5,
+            },
+          ],
+          messageCache: {
+            blocks: [
+              {
+                messagesByTopic: {
+                  a: msgEvents.slice(0, 5),
+                },
+                needTopics: new Map(),
+                sizeInBytes: 50,
+              },
+            ],
+            startTime: { sec: 0, nsec: 0 },
+          },
+        });
+
+        // need to wait for second progress call to receive cache full error
+        if (++progressCount > 1) {
+          await loader.stopLoading();
+        }
+      },
+    });
+    expect(consoleErrorMock.mock.calls[0] ?? []).toContain("cache-full");
+    consoleErrorMock.mockClear();
+
+    // Load the same topic but with message slicing. Since messages are much smaller then,
+    // we expect that we can preload the full range.
+    loader.setTopics(new Map([["a", { topic: "a", fields: ["some_field"] }]]));
+    let count = 0;
+    await loader.startLoading({
+      progress: async (progress) => {
+        count += 1;
+        if (count > maxBlockCount) {
+          throw new Error("Too many progress callbacks");
+        }
+
+        if (count === maxBlockCount) {
+          // eslint-disable-next-line jest/no-conditional-expect
+          expect(progress).toEqual({
+            fullyLoadedFractionRanges: [
+              {
+                start: 0,
+                end: 1.0,
+              },
+            ],
+            messageCache: {
+              blocks: [
+                {
+                  messagesByTopic: {
+                    a: slicedMsgEvents.slice(0, 5),
+                  },
+                  needTopics: new Map(),
+                  sizeInBytes: 5,
+                },
+                {
+                  messagesByTopic: {
+                    a: slicedMsgEvents.slice(5, 10),
+                  },
+                  needTopics: new Map(),
+                  sizeInBytes: 5,
+                },
+              ],
+              startTime: { sec: 0, nsec: 0 },
+            },
+            memoryInfo: {
+              [MEMORY_INFO_PRELOADED_MSGS]: 10,
+            },
+          });
+
+          await loader.stopLoading();
+        }
+      },
+    });
+  });
+
+  it("should keep existing topic message references when removing another topic", async () => {
+    const source = new TestSource();
+    const maxBlockCount = 2;
+    const loader = new BlockLoader({
+      maxBlocks: maxBlockCount,
+      cacheSizeBytes: 1_000,
+      minBlockDurationNs: 1,
+      source,
+      start: { sec: 0, nsec: 0 },
+      end: { sec: 9, nsec: 0 },
+      problemManager: new PlayerProblemManager(),
+    });
+
+    const msgEvents: MessageEvent[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      msgEvents.push({
+        topic: "a",
+        receiveTime: { sec: i, nsec: 0 },
+        message: undefined,
+        sizeInBytes: 10,
+        schemaName: "foo",
+      });
+    }
+
+    source.messageIterator = async function* messageIterator(
+      args: MessageIteratorArgs,
+    ): AsyncIterableIterator<Readonly<IteratorResult>> {
+      for (let i = 0; i < 10; ++i) {
+        for (const [topic] of args.topics) {
+          yield {
+            type: "message-event",
+            msgEvent: {
+              topic,
+              receiveTime: { sec: i, nsec: 0 },
+              message: undefined,
+              sizeInBytes: 10,
+              schemaName: "foo",
+            },
+          };
+        }
+      }
+    };
+
+    loader.setTopics(mockTopicSelection("a", "b"));
+    let lastBlocks: Immutable<(MessageBlock | undefined)[]> | undefined;
+    await loader.startLoading({
+      progress: async (progress) => {
+        lastBlocks = progress.messageCache?.blocks;
+
+        if (
+          progress.fullyLoadedFractionRanges?.[0]?.start === 0 &&
+          progress.fullyLoadedFractionRanges[0].end === 1
+        ) {
+          await loader.stopLoading();
+        }
+      },
+    });
+
+    const firstBlockLoad = lastBlocks;
+
+    loader.setTopics(mockTopicSelection("a"));
+    let count = 0;
+
+    setTimeout(async () => {
+      await loader.stopLoading();
+    }, 1000);
+    await loader.startLoading({
+      progress: async (progress) => {
+        lastBlocks = progress.messageCache?.blocks;
+        count += 1;
+      },
+    });
+
+    // There should not be any loading calls because the topic is already loaded
+    expect(count).toEqual(0);
+
+    // Topic _a_ does not change and should not be re-loaded into the blocks. The existing message
+    // arrays should be unchanged.
+    expect(firstBlockLoad?.[0]?.messagesByTopic["a"]).toBe(lastBlocks?.[0]?.messagesByTopic["a"]);
+    expect(firstBlockLoad?.[1]?.messagesByTopic["a"]).toBe(lastBlocks?.[1]?.messagesByTopic["a"]);
   });
 });

@@ -5,12 +5,13 @@
 export const panels = {
   "3D": "3D",
   "3DPanelDescription": "Display markers, camera images, meshes, URDFs, and more in a 3D scene.",
+  callService: "Service Call",
+  callServiceDescription: "Call a service and view the service call result",
   dataSourceInfo: "Data Source Info",
   dataSourceInfoDescription: "View details like topics and timestamps for the current data source.",
   gauge: "Gauge",
   gaugeDescription: "Display a colored gauge based on a continuous value.",
   image: "Image",
-  imageLegacy: "Image (Legacy)",
   imageDescription: "Display annotated images.",
   indicator: "Indicator",
   indicatorDescription: "Display a colored and/or textual indicator based on a threshold value.",
@@ -33,9 +34,6 @@ export const panels = {
   ROSDiagnosticSummaryDescription: "Display a summary of all ROS DiagnosticArray messages.",
   stateTransitions: "State Transitions",
   stateTransitionsDescription: "Track when values change over time.",
-  studioPlaybackPerformance: "Studio - Playback Performance",
-  studioPlaybackPerformanceDescription:
-    "Display playback and data-streaming performance statistics.",
   tab: "Tab",
   tabDescription: "Group panels together in a tabbed interface.",
   table: "Table",
@@ -49,4 +47,5 @@ export const panels = {
     "Write custom data transformations in TypeScript. Previously known as Node Playground.",
   variableSlider: "Variable Slider",
   variableSliderDescription: "Update numerical variable values for a layout.",
+  settings: "Settings",
 };

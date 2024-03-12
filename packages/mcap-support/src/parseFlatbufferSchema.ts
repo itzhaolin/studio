@@ -79,9 +79,8 @@ function typeForField(schema: SchemaT, field: FieldT): MessageDefinitionField[] 
         const enums = schema.enums[field.type.index]?.values;
         if (enums == undefined) {
           throw new Error(
-            `Invalid schema, missing enum values for field type ${
-              schema.enums[field.type.index]?.name
-            }`,
+            `Invalid schema, missing enum values for field type ${schema.enums[field.type.index]
+              ?.name}`,
           );
         }
         for (const enumVal of enums) {
@@ -152,9 +151,6 @@ function typeForField(schema: SchemaT, field: FieldT): MessageDefinitionField[] 
 
 /**
  * Parse a flatbuffer binary schema and produce datatypes and a deserializer function.
- *
- * Note: Currently this does not support "lazy" message reading in the style of the ros1 message
- * reader, and so will relatively inefficiently deserialize the entire flatbuffer message.
  */
 export function parseFlatbufferSchema(
   schemaName: string,

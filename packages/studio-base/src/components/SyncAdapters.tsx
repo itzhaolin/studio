@@ -4,8 +4,9 @@
 
 import { useMemo } from "react";
 
-import { CurrentLayoutSyncAdapter } from "@foxglove/studio-base/components/CurrentLayoutSyncAdapter";
+import { CurrentLayoutLocalStorageSyncAdapter } from "@foxglove/studio-base/components/CurrentLayoutLocalStorageSyncAdapter";
 import { URLStateSyncAdapter } from "@foxglove/studio-base/components/URLStateSyncAdapter";
+import { UpdateChecker } from "@foxglove/studio-base/components/UpdateChecker";
 import { useAppContext } from "@foxglove/studio-base/context/AppContext";
 
 export function SyncAdapters(): JSX.Element {
@@ -20,7 +21,8 @@ export function SyncAdapters(): JSX.Element {
     return (
       <>
         <URLStateSyncAdapter />
-        <CurrentLayoutSyncAdapter />
+        <CurrentLayoutLocalStorageSyncAdapter />
+        <UpdateChecker />
       </>
     );
   }, [syncAdapters]);

@@ -26,7 +26,8 @@ import {
   topicsWithIdsToDiffFixture,
   withMissingData,
 } from "./fixture";
-import { Constants, RawMessagesPanelConfig } from "./types";
+import type { RawMessagesPanelConfig } from "./types";
+import { Constants, NodeState } from "./types";
 
 const noDiffConfig = {
   diffMethod: "custom",
@@ -113,7 +114,7 @@ export const Overridden: StoryObj = {
         overrideConfig={{
           ...noDiffConfig,
           topicPath: "/msgs/big_topic",
-          expansion: { LotsOfStuff: "c", timestamp_array: "e" },
+          expansion: { LotsOfStuff: NodeState.Collapsed, timestamp_array: NodeState.Expanded },
         }}
       />
     </PanelSetup>
@@ -301,6 +302,7 @@ export const DiffSameMessages: StoryObj = {
           diffTopicPath: "/foo",
           diffEnabled: true,
           showFullMessageForDiff: false,
+          fontSize: undefined,
         }}
       />
     </PanelSetup>
@@ -318,6 +320,7 @@ export const DiffConsecutiveMessages: StoryObj = {
           diffEnabled: true,
           showFullMessageForDiff: true,
           expansion: "all",
+          fontSize: undefined,
         }}
       />
     </PanelSetup>
@@ -335,6 +338,7 @@ export const DiffConsecutiveMessagesWithFilter: StoryObj = {
           diffEnabled: true,
           showFullMessageForDiff: true,
           expansion: "all",
+          fontSize: undefined,
         }}
       />
     </PanelSetup>
@@ -352,6 +356,7 @@ export const DiffConsecutiveMessagesWithBigint: StoryObj = {
           diffEnabled: true,
           showFullMessageForDiff: true,
           expansion: "all",
+          fontSize: undefined,
         }}
       />
     </PanelSetup>
@@ -369,6 +374,7 @@ export const DisplayCorrectMessageWhenDiffIsDisabledEvenWithDiffMethodTopicSet: 
           diffEnabled: false,
           showFullMessageForDiff: true,
           expansion: "all",
+          fontSize: undefined,
         }}
       />
     </PanelSetup>

@@ -11,7 +11,7 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import { Cursor24Regular } from "@fluentui/react-icons";
+import { Cursor20Regular } from "@fluentui/react-icons";
 import { Typography } from "@mui/material";
 
 import type { LayoutActions } from "@foxglove/studio";
@@ -25,7 +25,6 @@ import TopicLink from "./TopicLink";
 import { InteractionData } from "./types";
 import { Pose } from "../transforms";
 
-// ts-prune-ignore-next
 export const OBJECT_TAB_TYPE = "Selected object";
 export type TabType = typeof OBJECT_TAB_TYPE;
 
@@ -38,10 +37,11 @@ export type SelectionObject = {
 };
 
 type Props = {
-  interactionsTabType?: TabType;
-  setInteractionsTabType: (arg0?: TabType) => void;
   addPanel: LayoutActions["addPanel"];
+  interactionsTabType?: TabType;
+  onShowTopicSettings?: (topic: string) => void;
   selectedObject?: SelectionObject;
+  setInteractionsTabType: (arg0?: TabType) => void;
   timezone: string | undefined;
 };
 
@@ -49,6 +49,7 @@ const InteractionsBaseComponent = React.memo<Props>(function InteractionsBaseCom
   addPanel,
   selectedObject,
   interactionsTabType,
+  onShowTopicSettings,
   setInteractionsTabType,
   timezone,
 }: Props) {
@@ -59,16 +60,22 @@ const InteractionsBaseComponent = React.memo<Props>(function InteractionsBaseCom
   return (
     <ExpandingToolbar
       tooltip="Inspect objects"
-      icon={<Cursor24Regular />}
+      icon={<Cursor20Regular />}
       selectedTab={interactionsTabType}
-      onSelectTab={(newSelectedTab) => setInteractionsTabType(newSelectedTab)}
+      onSelectTab={(newSelectedTab) => {
+        setInteractionsTabType(newSelectedTab);
+      }}
     >
       <ToolGroup name={OBJECT_TAB_TYPE}>
         <ToolGroupFixedSizePane>
           {originalMessage ? (
             <>
               {selectedInteractionData.topic && (
-                <TopicLink addPanel={addPanel} topic={selectedInteractionData.topic} />
+                <TopicLink
+                  addPanel={addPanel}
+                  onShowTopicSettings={onShowTopicSettings}
+                  topic={selectedInteractionData.topic}
+                />
               )}
               {instanceDetails ? (
                 <ObjectDetails selectedObject={instanceDetails} timezone={timezone} />

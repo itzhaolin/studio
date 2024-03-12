@@ -7,6 +7,7 @@
 import { mat4, quat, vec3, vec4 } from "gl-matrix";
 
 import { ArrayMap } from "@foxglove/den/collection";
+import { ObjectPool } from "@foxglove/den/collection/ObjectPool";
 
 import { Transform } from "./Transform";
 import { Pose, mat4Identity } from "./geometry";
@@ -15,17 +16,17 @@ import { Duration, interpolate, percentOf, Time } from "./time";
 type TimeAndTransform = [time: Time, transform: Transform];
 
 export const MAX_DURATION: Duration = 4_294_967_295n * BigInt(1e9);
+// Number of transforms evicted is this * max capacity
+export const MAX_CAPACITY_EVICT_PORTION = 0.25;
 
 const DEG2RAD = Math.PI / 180;
-const RAD2DEG = 180 / Math.PI;
 
 const tempLower: TimeAndTransform = [0n, Transform.Identity()];
 const tempUpper: TimeAndTransform = [0n, Transform.Identity()];
-const tempVec3: vec3 = [0, 0, 0];
 const tempVec4: vec4 = [0, 0, 0, 0];
+const temp2Vec4: vec4 = [0, 0, 0, 0];
 const tempTransform = Transform.Identity();
 const tempMatrix = mat4Identity();
-const temp2Matrix = mat4Identity();
 
 const FALLBACK_FRAME_ID = Symbol("FALLBACK_FRAME_ID");
 export type FallbackFrameId = typeof FALLBACK_FRAME_ID;
@@ -39,28 +40,25 @@ export type AnyFrameId = UserFrameId | FallbackFrameId;
  * hierarchy and transform history allow points to be transformed from one
  * coordinate frame to another while interpolating over time.
  */
-// ts-prune-ignore-next
 export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
   public static readonly FALLBACK_FRAME_ID: FallbackFrameId = FALLBACK_FRAME_ID;
 
   public readonly id: ID;
   public maxStorageTime: Duration;
   public maxCapacity: number;
-  // The percentage of maxCapacity that can be exceeded before overfilled frames in history are cleared
-  // allows for better perf by amortizing trimming of frames every few thousand transforms rather than every new transform
-  public capacityOverfillPercentage: number;
   public offsetPosition: vec3 | undefined;
   public offsetEulerDegrees: vec3 | undefined;
 
-  #parent?: CoordinateFrame<UserFrameId>;
+  #transformPool: ObjectPool<Transform>;
+  #parent?: CoordinateFrame;
   #transforms: ArrayMap<Time, Transform>;
 
   public constructor(
     id: ID,
-    parent: CoordinateFrame<UserFrameId> | undefined, // fallback frame not allowed as parent
+    parent: CoordinateFrame | undefined, // fallback frame not allowed as parent
     maxStorageTime: Duration,
     maxCapacity: number,
-    capacityOverfillPercentage = 0.1,
+    transformPool: ObjectPool<Transform>,
   ) {
     if (parent) {
       this.#parent = parent;
@@ -68,19 +66,19 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
     this.id = id;
     this.maxStorageTime = maxStorageTime;
     this.maxCapacity = maxCapacity;
-    this.capacityOverfillPercentage = capacityOverfillPercentage;
     this.#transforms = new ArrayMap<Time, Transform>();
+    this.#transformPool = transformPool;
   }
 
   public static assertUserFrame(
     frame: CoordinateFrame<AnyFrameId>,
-  ): asserts frame is CoordinateFrame<UserFrameId> {
+  ): asserts frame is CoordinateFrame {
     if (frame.id === FALLBACK_FRAME_ID) {
       throw new Error("Expected user frame");
     }
   }
 
-  public parent(): CoordinateFrame<UserFrameId> | undefined {
+  public parent(): CoordinateFrame | undefined {
     return this.#parent;
   }
 
@@ -94,7 +92,7 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
     }
     CoordinateFrame.assertUserFrame(this);
     // eslint-disable-next-line @typescript-eslint/no-this-alias
-    let root: CoordinateFrame<UserFrameId> = this;
+    let root: CoordinateFrame = this;
     while (root.#parent) {
       root = root.#parent;
     }
@@ -119,9 +117,12 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
    * Set the parent frame for this frame. If the parent frame is already set to
    * a different frame, the transform history is cleared.
    */
-  public setParent(parent: CoordinateFrame<UserFrameId>): void {
+  public setParent(parent: CoordinateFrame): void {
     if (this.#parent && this.#parent !== parent) {
-      this.#transforms.clear();
+      const removed = this.#transforms.clear();
+      for (const [, tf] of removed) {
+        this.#transformPool.release(tf);
+      }
     }
     this.#parent = parent;
   }
@@ -132,7 +133,7 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
    * @param id Frame ID to search for
    * @returns The ancestor frame, or undefined if not found
    */
-  public findAncestor(id: string): CoordinateFrame<UserFrameId> | undefined {
+  public findAncestor(id: string): CoordinateFrame | undefined {
     let ancestor = this.#parent;
     while (ancestor) {
       if (ancestor.id === id) {
@@ -144,45 +145,56 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
   }
 
   /**
-   * Add a transform to the transform history maintained by this frame. When the overfill
-   * limit has been reached, the history is trimmed by removing the larger portion of either
-   * frames that are outside of the `maxStorageTime` or the oldest frames over `maxCapacity`.
+   * Add a transform to the transform history maintained by this frame. When the maximum capacity
+   * has been reached, the history is trimmed by removing the larger portion of either
+   * frames that are outside of the `maxStorageTime` or the last quarter of oldest frames.
    * This is to amortize the cost of trimming the history ever time a new transform is added.
    *
    * If a transform with an identical timestamp already exists, it is replaced.
    */
   public addTransform(time: Time, transform: Transform): void {
-    this.#transforms.set(time, transform);
+    const oldTf = this.#transforms.set(time, transform);
+    if (oldTf) {
+      this.#transformPool.release(oldTf);
+    }
 
     // Remove transforms that are too old
-    // percent over the maxCapacity
-    const overfillPercent =
-      Math.max(0, this.#transforms.size - this.maxCapacity) / this.maxCapacity;
+    const transformsFull = this.#transforms.size >= this.maxCapacity;
 
-    // Trim down to the maximum history size if we've exceeded the overfill
-    if (overfillPercent > this.capacityOverfillPercentage) {
-      const overfillIndex = this.#transforms.size - this.maxCapacity;
+    // Trim down to the maximum history size if we've exceeded the capacity
+    if (transformsFull) {
+      // remove a quarter of old transforms
+      const removeBeforeIndex = Math.floor(this.maxCapacity * MAX_CAPACITY_EVICT_PORTION);
       // guaranteed to be more than minKey
-      let removeBeforeTime = this.#transforms.at(overfillIndex)![0];
+      let removeBeforeTime = this.#transforms.at(removeBeforeIndex)![0];
       const endTime = this.#transforms.maxKey()!;
       // not guaranteed to be more than minKey
       const startTime = endTime - this.maxStorageTime;
-      // at the very least we remove the overfill, but if the maxStorageTime enforces a  larger trim we take that
-      // we can't afford to check maxStorageTime every time we add a transform, so we only check it when overfill is full
+      // at the very least we trim a quarter, but if the maxStorageTime enforces a larger trim we take that
+      // we can't afford to check maxStorageTime every time we add a transform, so we only check it when capacity is full
       removeBeforeTime = startTime > removeBeforeTime ? startTime : removeBeforeTime;
 
-      this.#transforms.removeBefore(removeBeforeTime);
+      const entriesRemoved = this.#transforms.removeBefore(removeBeforeTime);
+      for (const [, tf] of entriesRemoved) {
+        this.#transformPool.release(tf);
+      }
     }
   }
 
   /** Remove all transforms with timestamps greater than the given timestamp. */
   public removeTransformsAfter(time: Time): void {
-    this.#transforms.removeAfter(time);
+    const removed = this.#transforms.removeAfter(time);
+    for (const [, tf] of removed) {
+      this.#transformPool.release(tf);
+    }
   }
 
   /** Removes a transform with a specific timestamp */
   public removeTransformAt(time: Time): void {
-    this.#transforms.remove(time);
+    const tf = this.#transforms.remove(time);
+    if (tf?.[1]) {
+      this.#transformPool.release(tf[1]);
+    }
   }
 
   /**
@@ -224,7 +236,7 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
     const index = this.#transforms.binarySearch(time);
     if (index >= 0) {
       // If the time is exactly on an existing transform, return it
-      const [_, tf] = this.#transforms.at(index)!;
+      const [, tf] = this.#transforms.at(index)!;
       outLower[0] = outUpper[0] = time;
       outLower[1] = outUpper[1] = tf;
       return true;
@@ -316,7 +328,7 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
         : undefined;
     }
     // Check if the two frames share a common ancestor
-    let curSrcFrame: CoordinateFrame<UserFrameId> | undefined = srcFrame;
+    let curSrcFrame: CoordinateFrame | undefined = srcFrame;
     while (curSrcFrame) {
       const commonAncestor = this.findAncestor(curSrcFrame.id);
       if (commonAncestor) {
@@ -468,10 +480,9 @@ export class CoordinateFrame<ID extends AnyFrameId = UserFrameId> {
 
       if (curFrame.offsetEulerDegrees) {
         const quaternion = tempTransform.rotation();
-        const rotationMatrix = mat4.fromQuat(temp2Matrix, quaternion);
-        const euler = eulerFromMatrixUnscaled(tempVec3, rotationMatrix);
-        vec3.add(euler, euler, curFrame.offsetEulerDegrees);
-        tempTransform.setRotation(quaternionFromEuler(tempVec4, euler));
+        const multByRotation = quaternionFromEuler(tempVec4, curFrame.offsetEulerDegrees);
+        quat.multiply(temp2Vec4, quaternion, multByRotation);
+        tempTransform.setRotation(temp2Vec4);
       }
 
       if (curFrame.offsetPosition) {
@@ -555,34 +566,6 @@ function copyPose(out: Pose, pose: Readonly<Pose>): void {
   out.orientation.y = o.y;
   out.orientation.z = o.z;
   out.orientation.w = o.w;
-}
-
-// Compute XYZ Euler angles in degrees from an unscaled rotation matrix. This
-// method is adapted from THREE.js Euler#setFromRotationMatrix()
-function eulerFromMatrixUnscaled(out: vec3, m: mat4): vec3 {
-  const m11 = m[0];
-  const m12 = m[4];
-  const m13 = m[8];
-  const m22 = m[5];
-  const m23 = m[9];
-  const m32 = m[6];
-  const m33 = m[10];
-
-  out[1] = Math.asin(Math.max(-1, Math.min(1, m13)));
-
-  if (Math.abs(m13) < 0.9999999) {
-    out[0] = Math.atan2(-m23, m33);
-    out[2] = Math.atan2(-m12, m11);
-  } else {
-    out[0] = Math.atan2(m32, m22);
-    out[2] = 0;
-  }
-
-  // Convert to degrees
-  out[0] *= RAD2DEG;
-  out[1] *= RAD2DEG;
-  out[2] *= RAD2DEG;
-  return out;
 }
 
 // Compute a quaternion from XYZ Euler angles in degrees. This method is adapted

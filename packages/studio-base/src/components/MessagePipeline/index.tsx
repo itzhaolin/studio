@@ -2,21 +2,24 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { debounce } from "lodash";
+import * as _ from "lodash-es";
 import {
   createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
 } from "react";
 import { StoreApi, useStore } from "zustand";
 
 import { useGuaranteedContext } from "@foxglove/hooks";
 import { Immutable } from "@foxglove/studio";
 import { AppSetting } from "@foxglove/studio-base/AppSetting";
+import CurrentLayoutContext, {
+  LayoutState,
+} from "@foxglove/studio-base/context/CurrentLayoutContext";
 import { useAppConfigurationValue } from "@foxglove/studio-base/hooks/useAppConfigurationValue";
 import { GlobalVariables } from "@foxglove/studio-base/hooks/useGlobalVariables";
 import {
@@ -31,12 +34,13 @@ import { pauseFrameForPromises, FramePromise } from "./pauseFrameForPromise";
 import {
   MessagePipelineInternalState,
   createMessagePipelineStore,
-  MessagePipelineStateAction,
   defaultPlayerState,
 } from "./store";
 import { MessagePipelineContext } from "./types";
 
 export type { MessagePipelineContext };
+
+const EMPTY_GLOBAL_VARIABLES: GlobalVariables = Object.freeze({});
 
 // exported only for MockMessagePipelineProvider
 export const ContextInternal = createContext<StoreApi<MessagePipelineInternalState> | undefined>(
@@ -63,6 +67,21 @@ export function useMessagePipeline<T>(selector: (arg0: MessagePipelineContext) =
   );
 }
 
+export function useMessagePipelineSubscribe(): (
+  fn: (state: MessagePipelineContext) => void,
+) => () => void {
+  const store = useGuaranteedContext(ContextInternal);
+
+  return useCallback(
+    (fn: (state: MessagePipelineContext) => void) => {
+      return store.subscribe((state) => {
+        fn(state.public);
+      });
+    },
+    [store],
+  );
+}
+
 type ProviderProps = {
   children: React.ReactNode;
 
@@ -71,26 +90,24 @@ type ProviderProps = {
   // responsible for providing player state information downstream in a context -- so this
   // information is passed in and merged with other player state.
   player?: Player;
-
-  globalVariables: GlobalVariables;
 };
 
 const selectRenderDone = (state: MessagePipelineInternalState) => state.renderDone;
 const selectSubscriptions = (state: MessagePipelineInternalState) => state.public.subscriptions;
 
-export function MessagePipelineProvider({
-  children,
-  player,
-  globalVariables,
-}: ProviderProps): React.ReactElement {
+export function MessagePipelineProvider({ children, player }: ProviderProps): React.ReactElement {
   const promisesToWaitForRef = useRef<FramePromise[]>([]);
-  const [store] = useState(() =>
-    createMessagePipelineStore({ promisesToWaitForRef, initialPlayer: player }),
-  );
-  useEffect(() => {
-    store.getState().dispatch({ type: "set-player", player });
-    player?.setPublishers(store.getState().allPublishers);
-  }, [player, store]);
+
+  // We make a new store when the player changes. This throws away any state from the previous store
+  // and re-creates the pipeline functions and references. We make a new store to avoid holding onto
+  // any state from the previous store.
+  //
+  // Note: This throws away any publishers, subscribers, etc that panels may have registered. We
+  // are ok with this behavior because the <Workspace> re-mounts all panels when a player changes.
+  // The re-mounted panels will re-initialize and setup new publishers and subscribers.
+  const store = useMemo(() => {
+    return createMessagePipelineStore({ promisesToWaitForRef, initialPlayer: player });
+  }, [player]);
 
   const subscriptions = useStore(store, selectSubscriptions);
 
@@ -99,7 +116,7 @@ export function MessagePipelineProvider({
   //
   // The delay of 0ms is intentional as we only want to give one timeout cycle to batch updates
   const debouncedPlayerSetSubscriptions = useMemo(() => {
-    return debounce((subs: Immutable<SubscribePayload[]>) => {
+    return _.debounce((subs: Immutable<SubscribePayload[]>) => {
       player?.setSubscriptions(subs);
     });
   }, [player]);
@@ -128,8 +145,39 @@ export function MessagePipelineProvider({
   const msPerFrameRef = useRef<number>(16);
   msPerFrameRef.current = 1000 / (messageRate ?? 60);
 
-  const dispatch = store.getState().dispatch;
+  // To avoid re-rendering the MessagePipelineProvider and all children when global variables change
+  // we register a listener directly on the context to track updates to global variables.
+  //
+  // We don't need to re-render because there's no react state update in our component that needs
+  // to render with this update.
+  const currentLayoutContext = useContext(CurrentLayoutContext);
+
   useEffect(() => {
+    // Track the last global variables we've received in the layout selector so we can avoid setting
+    // the variables on a player unless they have changed because we don't want to tell a player about
+    // new variables when there aren't any and make it potentially do work.
+    let lastGlobalVariablesInstance: GlobalVariables | undefined =
+      currentLayoutContext?.actions.getCurrentLayoutState().selectedLayout?.data?.globalVariables ??
+      EMPTY_GLOBAL_VARIABLES;
+
+    player?.setGlobalVariables(lastGlobalVariablesInstance);
+
+    const onLayoutStateUpdate = (state: LayoutState) => {
+      const globalVariables = state.selectedLayout?.data?.globalVariables ?? EMPTY_GLOBAL_VARIABLES;
+      if (globalVariables !== lastGlobalVariablesInstance) {
+        lastGlobalVariablesInstance = globalVariables;
+        player?.setGlobalVariables(globalVariables);
+      }
+    };
+
+    currentLayoutContext?.addLayoutStateListener(onLayoutStateUpdate);
+    return () => {
+      currentLayoutContext?.removeLayoutStateListener(onLayoutStateUpdate);
+    };
+  }, [currentLayoutContext, player]);
+
+  useEffect(() => {
+    const dispatch = store.getState().dispatch;
     if (!player) {
       // When there is no player, set the player state to the default to go back to a state where we
       // indicate the player is not present.
@@ -144,7 +192,7 @@ export function MessagePipelineProvider({
     const { listener, cleanupListener } = createPlayerListener({
       msPerFrameRef,
       promisesToWaitForRef,
-      dispatch,
+      store,
     });
     player.setListener(listener);
     return () => {
@@ -156,11 +204,7 @@ export function MessagePipelineProvider({
         renderDone: undefined,
       });
     };
-  }, [player, dispatch]);
-
-  useEffect(() => {
-    player?.setGlobalVariables(globalVariables);
-  }, [player, globalVariables]);
+  }, [player, store]);
 
   return <ContextInternal.Provider value={store}>{children}</ContextInternal.Provider>;
 }
@@ -203,14 +247,16 @@ function concatProblems(origState: PlayerState, problems: PlayerProblem[]): Play
 function createPlayerListener(args: {
   msPerFrameRef: React.MutableRefObject<number>;
   promisesToWaitForRef: React.MutableRefObject<FramePromise[]>;
-  dispatch: (action: MessagePipelineStateAction) => void;
+  store: StoreApi<MessagePipelineInternalState>;
 }): {
   listener: (state: PlayerState) => Promise<void>;
   cleanupListener: () => void;
 } {
-  const { msPerFrameRef, promisesToWaitForRef, dispatch: updateState } = args;
+  const { msPerFrameRef, promisesToWaitForRef, store } = args;
+  const updateState = store.getState().dispatch;
   const messageOrderTracker = new MessageOrderTracker();
   let closed = false;
+  let prevPlayerId: string | undefined;
   let resolveFn: undefined | (() => void);
   const listener = async (listenerPlayerState: PlayerState) => {
     if (closed) {
@@ -268,13 +314,18 @@ function createPlayerListener(args: {
       }, frameTime);
     }
 
+    if (prevPlayerId != undefined && listenerPlayerState.playerId !== prevPlayerId) {
+      store.getState().reset();
+    }
+    prevPlayerId = listenerPlayerState.playerId;
+
     updateState({
       type: "update-player-state",
       playerState: newPlayerState,
       renderDone,
     });
 
-    return await promise;
+    await promise;
   };
   return {
     listener,

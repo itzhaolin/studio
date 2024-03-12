@@ -8,9 +8,9 @@ import { IDataSourceFactory } from "@foxglove/studio-base/context/PlayerSelectio
 import {
   LeftSidebarItemKey,
   RightSidebarItemKey,
-  SidebarItemKey,
   WorkspaceContextStore,
 } from "@foxglove/studio-base/context/Workspace/WorkspaceContext";
+import { PlaybackSpeed } from "@foxglove/studio-base/players/types";
 
 // Type of version 0 store, used for migration.
 type WorkspaceContextStoreV0 = {
@@ -31,12 +31,12 @@ type WorkspaceContextStoreV0 = {
   rightSidebarSize: undefined | number;
   playbackControls: {
     repeat: boolean;
+    speed: PlaybackSpeed;
   };
   prefsDialogState: {
     initialTab: undefined | AppSettingsTab;
     open: boolean;
   };
-  sidebarItem: undefined | SidebarItemKey;
 };
 
 export function migrateV0WorkspaceState(
@@ -63,9 +63,6 @@ export function migrateV0WorkspaceState(
       shown: v0State.featureTours.shown,
     },
     sidebars: {
-      legacy: {
-        item: v0State.sidebarItem,
-      },
       left: {
         item: v0State.leftSidebarItem,
         open: v0State.leftSidebarOpen,
@@ -79,6 +76,7 @@ export function migrateV0WorkspaceState(
     },
     playbackControls: {
       repeat: v0State.playbackControls.repeat,
+      speed: v0State.playbackControls.speed,
     },
   };
   return migrated;

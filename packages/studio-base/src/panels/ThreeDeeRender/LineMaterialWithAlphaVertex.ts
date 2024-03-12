@@ -449,7 +449,7 @@ ShaderLib["foxglove.line"] = {
       gl_FragColor = vec4( diffuseColor.rgb, alpha );
 
       #include <tonemapping_fragment>
-      #include <encodings_fragment>
+      #include <colorspace_fragment>
       #include <fog_fragment>
       #include <premultiplied_alpha_fragment>
 
@@ -566,6 +566,11 @@ export class LineMaterialWithAlphaVertex extends ShaderMaterial {
 
   public set gapSize(value) {
     this.uniforms.gapSize!.value = value;
+  }
+
+  // Cannot use `set opacity()` because it would conflict with the superclass property
+  public setOpacity(value: number) {
+    this.uniforms.opacity!.value = value;
   }
 
   public get resolution(): THREE.Vector2 {

@@ -2,6 +2,8 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { t } from "i18next";
+import * as _ from "lodash-es";
 import * as THREE from "three";
 
 import { toNanoSec } from "@foxglove/rostime";
@@ -15,11 +17,15 @@ import { RenderableArrow } from "./markers/RenderableArrow";
 import { RenderableLineStrip } from "./markers/RenderableLineStrip";
 import type { AnyRendererSubscription, IRenderer } from "../IRenderer";
 import { BaseUserData, Renderable } from "../Renderable";
-import { PartialMessage, PartialMessageEvent, SceneExtension } from "../SceneExtension";
+import {
+  onlyLastByTopicMessage,
+  PartialMessage,
+  PartialMessageEvent,
+  SceneExtension,
+} from "../SceneExtension";
 import { SettingsTreeEntry } from "../SettingsManager";
 import { makeRgba, rgbaGradient, rgbaToCssString, stringToRgba } from "../color";
 import { POSES_IN_FRAME_DATATYPES } from "../foxglove";
-import { vecEqual } from "../math";
 import { normalizeHeader, normalizePose, normalizeTime } from "../normalizeMessages";
 import {
   PoseArray,
@@ -81,12 +87,6 @@ const DEFAULT_SETTINGS: LayerSettingsPoseArray = {
   gradient: DEFAULT_GRADIENT_STR,
 };
 
-const TYPE_OPTIONS = [
-  { label: "Axis", value: "axis" },
-  { label: "Arrow", value: "arrow" },
-  { label: "Line", value: "line" },
-];
-
 const tempColor1 = makeRgba();
 const tempColor2 = makeRgba();
 const tempColor3 = makeRgba();
@@ -103,8 +103,12 @@ export type PoseArrayUserData = BaseUserData & {
 
 export class PoseArrayRenderable extends Renderable<PoseArrayUserData> {
   public override dispose(): void {
-    this.userData.axes.forEach((axis) => axis.dispose());
-    this.userData.arrows.forEach((arrow) => arrow.dispose());
+    this.userData.axes.forEach((axis) => {
+      axis.dispose();
+    });
+    this.userData.arrows.forEach((arrow) => {
+      arrow.dispose();
+    });
     this.userData.lineStrip?.dispose();
     super.dispose();
   }
@@ -139,8 +143,9 @@ export class PoseArrayRenderable extends Renderable<PoseArrayUserData> {
 }
 
 export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
-  public constructor(renderer: IRenderer) {
-    super("foxglove.PoseArrays", renderer);
+  public static extensionId = "foxglove.PoseArrays";
+  public constructor(renderer: IRenderer, name: string = PoseArrays.extensionId) {
+    super(name, renderer);
   }
 
   public override getSubscriptions(): readonly AnyRendererSubscription[] {
@@ -148,17 +153,17 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
       {
         type: "schema",
         schemaNames: POSE_ARRAY_DATATYPES,
-        subscription: { handler: this.#handlePoseArray },
+        subscription: { handler: this.#handlePoseArray, filterQueue: onlyLastByTopicMessage },
       },
       {
         type: "schema",
         schemaNames: POSES_IN_FRAME_DATATYPES,
-        subscription: { handler: this.#handlePosesInFrame },
+        subscription: { handler: this.#handlePosesInFrame, filterQueue: onlyLastByTopicMessage },
       },
       {
         type: "schema",
         schemaNames: NAV_PATH_DATATYPES,
-        subscription: { handler: this.#handleNavPath },
+        subscription: { handler: this.#handleNavPath, filterQueue: onlyLastByTopicMessage },
       },
     ];
   }
@@ -184,23 +189,36 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
       const gradient = config.gradient ?? DEFAULT_GRADIENT_STR;
 
       const fields: SettingsTreeFields = {
-        type: { label: "Type", input: "select", options: TYPE_OPTIONS, value: displayType },
+        type: {
+          label: t("threeDee:type"),
+          input: "select",
+          options: [
+            { label: t("threeDee:poseDisplayTypeAxis"), value: "axis" },
+            { label: t("threeDee:poseDisplayTypeArrow"), value: "arrow" },
+            { label: t("threeDee:poseDisplayTypeLine"), value: "line" },
+          ],
+          value: displayType,
+        },
       };
       switch (displayType) {
         case "axis":
-          fields["axisScale"] = fieldSize("Scale", axisScale, DEFAULT_AXIS_SCALE);
+          fields["axisScale"] = fieldSize(t("threeDee:scale"), axisScale, DEFAULT_AXIS_SCALE);
           break;
         case "arrow":
-          fields["arrowScale"] = fieldScaleVec3("Scale", arrowScale);
+          fields["arrowScale"] = fieldScaleVec3(t("threeDee:scale"), arrowScale);
           break;
         case "line":
-          fields["lineWidth"] = fieldLineWidth("Line Width", lineWidth, DEFAULT_LINE_WIDTH);
+          fields["lineWidth"] = fieldLineWidth(
+            t("threeDee:lineWidth"),
+            lineWidth,
+            DEFAULT_LINE_WIDTH,
+          );
           break;
       }
 
       // Axis does not currently support gradients. This could possibly be done with tinting
       if (displayType !== "axis") {
-        fields["gradient"] = fieldGradient("Gradient", gradient);
+        fields["gradient"] = fieldGradient(t("threeDee:gradient"), gradient);
       }
 
       entries.push({
@@ -348,8 +366,12 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
   ): void {
     // Generate a Marker with the right scale and color
     const createArrowMarkerFromIndex = (i: number): Marker => {
-      const t = i / (poseArray.poses.length - 1);
-      const color = rgbaGradient(tempColor3, colorStart, colorEnd, t);
+      const color = rgbaGradient(
+        tempColor3,
+        colorStart,
+        colorEnd,
+        i / (poseArray.poses.length - 1),
+      );
       return createArrowMarker(renderable.userData.settings.arrowScale, color);
     };
 
@@ -394,8 +416,8 @@ export class PoseArrays extends SceneExtension<PoseArrayRenderable> {
     const axisOrArrowSettingsChanged =
       settings.type !== prevSettings.type ||
       settings.axisScale !== prevSettings.axisScale ||
-      !vecEqual(settings.arrowScale, prevSettings.arrowScale) ||
-      !vecEqual(settings.gradient, prevSettings.gradient) ||
+      !_.isEqual(settings.arrowScale, prevSettings.arrowScale) ||
+      !_.isEqual(settings.gradient, prevSettings.gradient) ||
       (renderable.userData.arrows.length === 0 && renderable.userData.axes.length === 0);
 
     renderable.userData.settings = settings;
@@ -492,8 +514,7 @@ function createLineStripMarker(
   // Create a gradient of colors for the line strip
   const colors: ColorRGBA[] = [];
   for (let i = 0; i < message.poses.length; i++) {
-    const t = i / (message.poses.length - 1);
-    colors.push(rgbaGradient(makeRgba(), colorStart, colorEnd, t));
+    colors.push(rgbaGradient(makeRgba(), colorStart, colorEnd, i / (message.poses.length - 1)));
   }
 
   return {

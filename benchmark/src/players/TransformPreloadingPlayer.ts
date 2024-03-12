@@ -148,6 +148,7 @@ class TransformPreloadingPlayer implements Player {
         currentTime: this.#startTime,
         startTime: this.#startTime,
         isPlaying: false,
+        repeatEnabled: false,
         speed: 1,
         lastSeekTime: 1,
         endTime: this.#endTime,
@@ -236,6 +237,7 @@ class TransformPreloadingPlayer implements Player {
             endTime: this.#endTime,
             currentTime: seekToMessage.receiveTime,
             isPlaying: false,
+            repeatEnabled: false,
             speed: 1,
             lastSeekTime: Date.now(),
             topics: this.#topics,
@@ -246,6 +248,7 @@ class TransformPreloadingPlayer implements Player {
         const endFrame = performance.now();
         seekFramesMs.push(endFrame - startFrame);
       }
+      // eslint-disable-next-line no-loop-func
       seekFramesMs.forEach((ms, i) => (seekFramesMsTotals[i]! += ms));
     }
 
@@ -280,6 +283,7 @@ class TransformPreloadingPlayer implements Player {
             endTime: this.#endTime,
             currentTime: seekToMessage.receiveTime,
             isPlaying: false,
+            repeatEnabled: false,
             speed: 1,
             lastSeekTime: Date.now(),
             topics: this.#topics,

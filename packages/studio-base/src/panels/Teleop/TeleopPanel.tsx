@@ -2,7 +2,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { set } from "lodash";
+import * as _ from "lodash-es";
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { DeepPartial } from "ts-essentials";
 
@@ -146,7 +146,7 @@ function TeleopPanel(props: TeleopPanelProps): JSX.Element {
 
     setConfig((previous) => {
       const newConfig = { ...previous };
-      set(newConfig, action.payload.path.slice(1), action.payload.value);
+      _.set(newConfig, action.payload.path.slice(1), action.payload.value);
       return newConfig;
     });
   }, []);
@@ -284,13 +284,9 @@ function TeleopPanel(props: TeleopPanelProps): JSX.Element {
         alignItems="center"
         style={{ padding: "min(5%, 8px)", textAlign: "center" }}
       >
-        {!canPublish && (
-          <EmptyState>
-            Please connect to a datasource that supports publishing in order to use this panel
-          </EmptyState>
-        )}
+        {!canPublish && <EmptyState>Connect to a data source that supports publishing</EmptyState>}
         {canPublish && !hasTopic && (
-          <EmptyState>Please select a publish topic in the panel settings</EmptyState>
+          <EmptyState>Select a publish topic in the panel settings</EmptyState>
         )}
         {enabled && <DirectionalPad onAction={setCurrentAction} disabled={!enabled} />}
       </Stack>

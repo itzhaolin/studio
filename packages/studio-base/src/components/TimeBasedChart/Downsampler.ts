@@ -2,21 +2,17 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { iterateObjects } from "@foxglove/studio-base/components/Chart/datasets";
 import { RpcScales } from "@foxglove/studio-base/components/Chart/types";
+import { grey } from "@foxglove/studio-base/util/toolsColorScheme";
 
-import { downsampleScatter, downsampleTimeseries } from "./downsample";
-import { ChartDatasets } from "./types";
-
-type DatasetBounds = {
-  x: { min?: number; max?: number };
-  y: { min?: number; max?: number };
-};
+import { MAX_POINTS } from "./downsample";
+import { downsampleStates } from "./downsampleStates";
+import { ChartDatasets, PlotViewport } from "./types";
 
 type UpdateParams = {
   datasets?: ChartDatasets;
-  width?: number;
-  height?: number;
-  datasetBounds?: DatasetBounds;
+  datasetBounds?: PlotViewport;
   scales?: RpcScales;
 };
 
@@ -25,9 +21,7 @@ type UpdateParams = {
  */
 export class Downsampler {
   #datasets: ChartDatasets = [];
-  #width = 0;
-  #height = 0;
-  #datasetBounds?: DatasetBounds;
+  #datasetBounds?: PlotViewport;
   #scales?: RpcScales;
 
   /**
@@ -35,8 +29,6 @@ export class Downsampler {
    */
   public update(opt: UpdateParams): void {
     this.#datasets = opt.datasets ?? this.#datasets;
-    this.#width = opt.width ?? this.#width;
-    this.#height = opt.height ?? this.#height;
     this.#datasetBounds = opt.datasetBounds ?? this.#datasetBounds;
     this.#scales = opt.scales ?? this.#scales;
   }
@@ -44,84 +36,72 @@ export class Downsampler {
   /**
    * Perform a downsample with the latest state
    */
-  public downsample(): ChartDatasets {
+  public downsample(): ChartDatasets | undefined {
+    const width = this.#datasetBounds?.width;
+    const height = this.#datasetBounds?.height;
+
     const currentScales = this.#scales;
-    let bounds:
-      | {
-          width: number;
-          height: number;
-          x: { min: number; max: number };
-          y: { min: number; max: number };
-        }
-      | undefined = undefined;
+    let view: PlotViewport | undefined = undefined;
     if (currentScales?.x && currentScales.y) {
-      bounds = {
-        width: this.#width,
-        height: this.#height,
-        x: {
-          min: currentScales.x.min,
-          max: currentScales.x.max,
-        },
-        y: {
-          min: currentScales.y.min,
-          max: currentScales.y.max,
-        },
-      };
-    }
-
-    const dataBounds = this.#datasetBounds;
-    if (!dataBounds) {
-      return [];
-    }
-
-    // if we don't have bounds (chart not initialized) but do have dataset bounds
-    // then setup bounds as x/y min/max around the dataset values rather than the scales
-    if (
-      !bounds &&
-      dataBounds.x.min != undefined &&
-      dataBounds.x.max != undefined &&
-      dataBounds.y.min != undefined &&
-      dataBounds.y.max != undefined
-    ) {
-      bounds = {
-        width: this.#width,
-        height: this.#height,
-        x: {
-          min: dataBounds.x.min,
-          max: dataBounds.x.max,
-        },
-        y: {
-          min: dataBounds.y.min,
-          max: dataBounds.y.max,
+      view = {
+        width: width ?? 0,
+        height: height ?? 0,
+        bounds: {
+          x: {
+            min: currentScales.x.min,
+            max: currentScales.x.max,
+          },
+          y: {
+            min: currentScales.y.min,
+            max: currentScales.y.max,
+          },
         },
       };
     }
 
-    // If we don't have any bounds - we assume the component is still initializing and return no data
-    // The other alternative is to return the full data set. This leads to rendering full fidelity data
-    // which causes render pauses and blank charts for large data sets.
-    if (!bounds) {
-      return [];
+    if (this.#datasetBounds == undefined) {
+      return undefined;
     }
 
+    const numPoints = MAX_POINTS / Math.max(this.#datasets.length, 1);
     return this.#datasets.map((dataset) => {
-      if (!bounds) {
+      if (!view) {
         return dataset;
       }
 
-      const downsampled =
-        dataset.showLine !== true
-          ? downsampleScatter(dataset, bounds)
-          : downsampleTimeseries(dataset, bounds);
+      const downsampled = downsampleStates(iterateObjects(dataset.data), view, numPoints);
+      const yValue = dataset.data[0]?.y ?? 0;
+      const resolved = downsampled.map(({ x, index, states }) => {
+        if (index == undefined) {
+          return {
+            x,
+            y: yValue,
+            labelColor: grey,
+            label: "[...]",
+            states,
+          };
+        }
+
+        const point = dataset.data[index];
+        if (point == undefined) {
+          return point;
+        }
+
+        return {
+          ...point,
+          x,
+        };
+      });
+
       // NaN item values create gaps in the line
-      const undefinedToNanData = downsampled.data.map((item) => {
+      const undefinedToNanData = resolved.map((item) => {
         if (item == undefined || isNaN(item.x) || isNaN(item.y)) {
           return { x: NaN, y: NaN, value: NaN };
         }
         return item;
       });
 
-      return { ...downsampled, data: undefinedToNanData };
+      return { ...dataset, data: undefinedToNanData };
     });
   }
 }

@@ -193,7 +193,7 @@ export type RenderState = {
   /**
    * Map of current Studio variables. Variables are key/value pairs that are globally accessible
    * to panels and scripts in the current layout. See
-   * <https://foxglove.dev/docs/studio/app-concepts/variables> for more information.
+   * <https://docs.foxglove.dev/docs/visualization/variables> for more information.
    */
   variables?: Map<string, VariableValue>;
 
@@ -437,6 +437,17 @@ export interface ExtensionContext {
 
   registerPanel(params: ExtensionPanelRegistration): void;
 
+  /**
+   * Register a function to convert messages from one schema to another.
+   *
+   * A converter function is invoked when a panel subscribes to a topic with the `convertTo` option.
+   * The return value of the converter function is the converted message and is provided to the
+   * panel.
+   *
+   * If the converter function invocation returns _undefined_, the output of the converter for that
+   * message is ignored and no message is provided to the panel. This is useful in instances where
+   * you might want to selectively output a converted schema depending on the input message.
+   */
   registerMessageConverter<Src>(args: RegisterMessageConverterArgs<Src>): void;
 
   /**
@@ -447,9 +458,7 @@ export interface ExtensionContext {
   registerTopicAliases(aliasFunction: TopicAliasFunction): void;
 }
 
-export interface ExtensionActivate {
-  (extensionContext: ExtensionContext): void;
-}
+export type ExtensionActivate = (extensionContext: ExtensionContext) => void;
 
 // ExtensionModule describes the interface your extension entry level module must export
 // as its default export
@@ -460,6 +469,7 @@ export interface ExtensionModule {
 export type SettingsIcon =
   | "Add"
   | "Addchart"
+  | "AutoAwesome"
   | "Background"
   | "Camera"
   | "Cells"
@@ -565,12 +575,12 @@ export type SettingsTreeFieldValue =
   | {
       input: "select";
       value?: number | number[];
-      options: Array<{ label: string; value: undefined | number }>;
+      options: Array<{ label: string; value: undefined | number; disabled?: boolean }>;
     }
   | {
       input: "select";
       value?: string | string[];
-      options: Array<{ label: string; value: undefined | string }>;
+      options: Array<{ label: string; value: undefined | string; disabled?: boolean }>;
     }
   | {
       input: "string";
